@@ -66,7 +66,7 @@ class HeatingProfileClimate(HeatingProfileEntity, ClimateEntity):
 
     # The entity takes the device name, e.g. climate.living_room.
     _attr_name = None
-    _attr_hvac_modes = [HVACMode.HEAT, HVACMode.COOL, HVACMode.OFF]
+    _attr_hvac_modes = [HVACMode.HEAT, HVACMode.COOL, HVACMode.AUTO, HVACMode.OFF]
     _attr_preset_modes = [PERIOD_DAY, PERIOD_NIGHT]
     _attr_supported_features = (
         ClimateEntityFeature.TARGET_TEMPERATURE
@@ -137,7 +137,7 @@ class HeatingProfileClimate(HeatingProfileEntity, ClimateEntity):
         self._data.async_update(hvac_mode=str(hvac_mode))
 
     async def async_turn_on(self) -> None:
-        """Restore the last heat/cool mode."""
+        """Restore the last heat/cool/auto mode."""
         self._data.async_update(hvac_mode=self._data.last_active_mode)
 
     async def async_turn_off(self) -> None:

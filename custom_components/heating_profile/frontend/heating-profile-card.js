@@ -12,12 +12,14 @@ const DEBOUNCE_MS = 800;
 const MODES = [
   { mode: "heat", icon: "mdi:fire", label: "Heat" },
   { mode: "cool", icon: "mdi:snowflake", label: "Cool" },
+  { mode: "auto", icon: "mdi:thermostat-auto", label: "Auto" },
   { mode: "off", icon: "mdi:power", label: "Off" },
 ];
 
 const MODE_COLORS = {
   heat: "var(--state-climate-heat-color, #ff8100)",
   cool: "var(--state-climate-cool-color, #2b9af9)",
+  auto: "var(--state-climate-auto-color, #008000)",
   off: "var(--state-climate-off-color, var(--disabled-color, #8a8a8a))",
 };
 

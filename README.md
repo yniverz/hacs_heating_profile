@@ -6,7 +6,7 @@
 
 A virtual thermostat per room: one device with a **climate entity** that holds
 a day temperature, a night temperature, the times when day and night start,
-and a Heat / Cool / Off mode. It comes with its own **dashboard card**.
+and a Heat / Cool / Auto / Off mode. It comes with its own **dashboard card**.
 
 It **controls nothing** by itself. It stores the values (they survive
 restarts) and shows the temperature that should be active right now, so your
@@ -54,7 +54,7 @@ The card shows:
   temperature of the current period.
 - **A Day / Night badge**. Tap it to switch to the other period until the next
   scheduled switch ("Manual until 22:00").
-- **Heat, Cool and Off** buttons.
+- **Heat, Cool, Auto and Off** buttons.
 - **Day and Night rows**, each with its temperature (− / +) and start time.
 
 If the card doesn't show up right after installing or updating, reload the
@@ -83,9 +83,10 @@ dashboards, but automations can still use them.
 
 ### Climate entity
 
-- **State / HVAC mode:** `heat`, `cool` or `off`. It's only stored, so your
-  automations decide what each mode means. Turning it on again restores the
-  last mode (heat or cool).
+- **State / HVAC mode:** `heat`, `cool`, `auto` or `off`. It's only stored, so
+  your automations decide what each mode means. `auto` takes no side: use it
+  when the target should be reached by heating *or* cooling, whichever the
+  room needs. Turning it on again restores the last mode (heat, cool or auto).
 - **Target temperature:** the day temperature between *Day starts* and *Night
   starts*, otherwise the night temperature. The day range may cross midnight
   (e.g. day 20:00 → night 04:00). If both times are equal, it is always night.

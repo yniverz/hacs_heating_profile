@@ -27,8 +27,9 @@ PERIOD_NIGHT = "night"
 # so the storage layer does not depend on the climate component.
 HVAC_MODE_HEAT = "heat"
 HVAC_MODE_COOL = "cool"
+HVAC_MODE_AUTO = "auto"
 HVAC_MODE_OFF = "off"
-HVAC_MODES = (HVAC_MODE_HEAT, HVAC_MODE_COOL, HVAC_MODE_OFF)
+HVAC_MODES = (HVAC_MODE_HEAT, HVAC_MODE_COOL, HVAC_MODE_AUTO, HVAC_MODE_OFF)
 DEFAULT_HVAC_MODE = HVAC_MODE_HEAT
 
 SERVICE_SET_PROFILE = "set_profile"

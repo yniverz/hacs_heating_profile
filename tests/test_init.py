@@ -125,7 +125,12 @@ async def test_climate_defaults(hass: HomeAssistant, entry: MockConfigEntry) -> 
     state = hass.states.get(CLIMATE)
     assert state.state == HVACMode.HEAT
     attrs = state.attributes
-    assert attrs["hvac_modes"] == [HVACMode.HEAT, HVACMode.COOL, HVACMode.OFF]
+    assert attrs["hvac_modes"] == [
+        HVACMode.HEAT,
+        HVACMode.COOL,
+        HVACMode.AUTO,
+        HVACMode.OFF,
+    ]
     assert attrs["preset_modes"] == ["day", "night"]
     assert attrs[ATTR_PRESET_MODE] == "day"
     assert attrs[ATTR_TEMPERATURE] == 21.0
@@ -150,7 +155,7 @@ async def test_climate_defaults(hass: HomeAssistant, entry: MockConfigEntry) -> 
 async def test_hvac_modes_and_turn_on(
     hass: HomeAssistant, entry: MockConfigEntry
 ) -> None:
-    """Heat, cool and off are stored; turn_on restores the last active mode."""
+    """Heat, cool, auto and off are stored; turn_on restores the last one."""
     await climate_call(hass, SERVICE_SET_HVAC_MODE, **{ATTR_HVAC_MODE: "cool"})
     assert hass.states.get(CLIMATE).state == HVACMode.COOL
 
@@ -159,6 +164,15 @@ async def test_hvac_modes_and_turn_on(
 
     await climate_call(hass, SERVICE_TURN_ON)
     assert hass.states.get(CLIMATE).state == HVACMode.COOL
+
+    # Auto takes no side; it is restored by turn_on like heat/cool.
+    await climate_call(hass, SERVICE_SET_HVAC_MODE, **{ATTR_HVAC_MODE: "auto"})
+    state = hass.states.get(CLIMATE)
+    assert state.state == HVACMode.AUTO
+    assert state.attributes[ATTR_TEMPERATURE] == 21.0
+    await climate_call(hass, SERVICE_TURN_OFF)
+    await climate_call(hass, SERVICE_TURN_ON)
+    assert hass.states.get(CLIMATE).state == HVACMode.AUTO
 
 
 async def test_set_temperature_changes_active_period(
@@ -397,7 +411,7 @@ async def test_persistence_after_reload(
     await set_number(hass, NIGHT_TEMP, 15.5)
     await set_time(hass, DAY_START, "05:45")
     await set_time(hass, NIGHT_START, "23:30")
-    await climate_call(hass, SERVICE_SET_HVAC_MODE, **{ATTR_HVAC_MODE: "cool"})
+    await climate_call(hass, SERVICE_SET_HVAC_MODE, **{ATTR_HVAC_MODE: "auto"})
     await climate_call(hass, SERVICE_SET_PRESET_MODE, **{ATTR_PRESET_MODE: "night"})
 
     assert await hass.config_entries.async_reload(entry.entry_id)
@@ -409,12 +423,12 @@ async def test_persistence_after_reload(
     assert stored["night_temp"] == 15.5
     assert stored["day_start"] == "05:45:00"
     assert stored["night_start"] == "23:30:00"
-    assert stored["hvac_mode"] == "cool"
+    assert stored["hvac_mode"] == "auto"
     assert stored["override_period"] == "night"
     assert stored["override_until"].startswith("2026-01-15T23:30:00")
 
     state = hass.states.get(CLIMATE)
-    assert state.state == HVACMode.COOL
+    assert state.state == HVACMode.AUTO
     assert state.attributes[ATTR_PRESET_MODE] == "night"
     assert state.attributes[ATTR_TEMPERATURE] == 15.5
     assert hass.states.get(DAY_TEMP).state == "23.0"
