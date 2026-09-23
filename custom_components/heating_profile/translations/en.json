@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Create a heating profile",
+        "description": "Stores day/night temperatures and times for one room. It controls nothing; your automations read its values.",
+        "data": {
+          "name": "Name"
+        }
+      }
+    }
+  }
+}
