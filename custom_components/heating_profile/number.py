@@ -7,7 +7,7 @@ from homeassistant.components.number import (
     NumberEntity,
     NumberEntityDescription,
 )
-from homeassistant.const import UnitOfTemperature
+from homeassistant.const import EntityCategory, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -17,16 +17,8 @@ from .entity import HeatingProfileEntity
 
 # The key doubles as the attribute name on HeatingProfileData.
 DESCRIPTIONS = (
-    NumberEntityDescription(
-        key="day_temp",
-        name="Day temperature",
-        icon="mdi:weather-sunny",
-    ),
-    NumberEntityDescription(
-        key="night_temp",
-        name="Night temperature",
-        icon="mdi:weather-night",
-    ),
+    NumberEntityDescription(key="day_temp", translation_key="day_temperature"),
+    NumberEntityDescription(key="night_temp", translation_key="night_temperature"),
 )
 
 
@@ -42,6 +34,7 @@ async def async_setup_entry(
 class HeatingProfileNumber(HeatingProfileEntity, NumberEntity):
     """A stored temperature setting."""
 
+    _attr_entity_category = EntityCategory.CONFIG
     _attr_device_class = NumberDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_native_min_value = MIN_TEMP

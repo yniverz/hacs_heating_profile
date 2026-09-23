@@ -40,5 +40,5 @@ async def test_multiple_entries_allowed(hass: HomeAssistant) -> None:
 
     entries = hass.config_entries.async_entries(DOMAIN)
     assert sorted(e.title for e in entries) == ["Bedroom", "Kitchen"]
-    assert hass.states.get("sensor.kitchen_target_temperature") is not None
-    assert hass.states.get("sensor.bedroom_target_temperature") is not None
+    assert hass.states.get("climate.kitchen") is not None
+    assert hass.states.get("climate.bedroom") is not None

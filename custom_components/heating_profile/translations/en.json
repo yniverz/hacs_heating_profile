@@ -3,9 +3,63 @@
     "step": {
       "user": {
         "title": "Create a heating profile",
-        "description": "Stores day/night temperatures and times for one room. It controls nothing; your automations read its values.",
+        "description": "A thermostat-like device with day/night temperatures for one room. It controls nothing; your automations read its values.",
         "data": {
           "name": "Name"
+        }
+      }
+    }
+  },
+  "entity": {
+    "climate": {
+      "profile": {
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "day": "Day",
+              "night": "Night"
+            }
+          }
+        }
+      }
+    },
+    "number": {
+      "day_temperature": {
+        "name": "Day temperature"
+      },
+      "night_temperature": {
+        "name": "Night temperature"
+      }
+    },
+    "time": {
+      "day_start": {
+        "name": "Day starts"
+      },
+      "night_start": {
+        "name": "Night starts"
+      }
+    }
+  },
+  "services": {
+    "set_profile": {
+      "name": "Set profile",
+      "description": "Changes the day/night temperatures and start times of a heating profile.",
+      "fields": {
+        "day_temperature": {
+          "name": "Day temperature",
+          "description": "Target temperature during the day."
+        },
+        "night_temperature": {
+          "name": "Night temperature",
+          "description": "Target temperature during the night."
+        },
+        "day_start": {
+          "name": "Day starts",
+          "description": "Time the day period begins."
+        },
+        "night_start": {
+          "name": "Night starts",
+          "description": "Time the night period begins."
         }
       }
     }

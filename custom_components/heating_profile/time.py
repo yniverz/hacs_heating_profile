@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import time
 
 from homeassistant.components.time import TimeEntity, TimeEntityDescription
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
@@ -13,16 +14,8 @@ from .entity import HeatingProfileEntity
 
 # The key doubles as the attribute name on HeatingProfileData.
 DESCRIPTIONS = (
-    TimeEntityDescription(
-        key="day_start",
-        name="Day starts",
-        icon="mdi:weather-sunset-up",
-    ),
-    TimeEntityDescription(
-        key="night_start",
-        name="Night starts",
-        icon="mdi:weather-sunset-down",
-    ),
+    TimeEntityDescription(key="day_start", translation_key="day_start"),
+    TimeEntityDescription(key="night_start", translation_key="night_start"),
 )
 
 
@@ -37,6 +30,8 @@ async def async_setup_entry(
 
 class HeatingProfileTime(HeatingProfileEntity, TimeEntity):
     """A stored start time setting."""
+
+    _attr_entity_category = EntityCategory.CONFIG
 
     @property
     def native_value(self) -> time:

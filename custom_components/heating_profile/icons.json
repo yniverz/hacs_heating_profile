@@ -1,0 +1,38 @@
+{
+  "entity": {
+    "climate": {
+      "profile": {
+        "default": "mdi:thermostat",
+        "state_attributes": {
+          "preset_mode": {
+            "state": {
+              "day": "mdi:weather-sunny",
+              "night": "mdi:weather-night"
+            }
+          }
+        }
+      }
+    },
+    "number": {
+      "day_temperature": {
+        "default": "mdi:weather-sunny"
+      },
+      "night_temperature": {
+        "default": "mdi:weather-night"
+      }
+    },
+    "time": {
+      "day_start": {
+        "default": "mdi:weather-sunset-up"
+      },
+      "night_start": {
+        "default": "mdi:weather-sunset-down"
+      }
+    }
+  },
+  "services": {
+    "set_profile": {
+      "service": "mdi:calendar-clock"
+    }
+  }
+}

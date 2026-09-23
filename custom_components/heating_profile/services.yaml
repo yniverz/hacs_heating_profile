@@ -1,0 +1,26 @@
+set_profile:
+  target:
+    entity:
+      integration: heating_profile
+      domain: climate
+  fields:
+    day_temperature:
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.5
+          unit_of_measurement: "°C"
+    night_temperature:
+      selector:
+        number:
+          min: 5
+          max: 30
+          step: 0.5
+          unit_of_measurement: "°C"
+    day_start:
+      selector:
+        time:
+    night_start:
+      selector:
+        time:
