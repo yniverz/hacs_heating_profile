@@ -1,7 +1,8 @@
 """The Heating Profile integration.
 
 A virtual thermostat-like device that controls nothing. It stores day/night
-temperatures, start times and a heat/cool/off mode that automations can read.
+temperature ranges, start times and a heat/cool/heat_cool/off mode that
+automations can read.
 """
 
 from __future__ import annotations

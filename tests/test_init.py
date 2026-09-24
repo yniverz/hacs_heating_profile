@@ -5,6 +5,8 @@ from datetime import time, timedelta
 from homeassistant.components.climate import (
     ATTR_HVAC_MODE,
     ATTR_PRESET_MODE,
+    ATTR_TARGET_TEMP_HIGH,
+    ATTR_TARGET_TEMP_LOW,
     DOMAIN as CLIMATE_DOMAIN,
     SERVICE_SET_HVAC_MODE,
     SERVICE_SET_PRESET_MODE,
@@ -47,8 +49,10 @@ from custom_components.heating_profile.const import DOMAIN, SERVICE_SET_PROFILE
 from custom_components.heating_profile.profile import is_day
 
 CLIMATE = "climate.living_room"
-DAY_TEMP = "number.living_room_day_temperature"
-NIGHT_TEMP = "number.living_room_night_temperature"
+DAY_TEMP = "number.living_room_day_minimum"
+DAY_MAX = "number.living_room_day_maximum"
+NIGHT_TEMP = "number.living_room_night_minimum"
+NIGHT_MAX = "number.living_room_night_maximum"
 DAY_START = "time.living_room_day_starts"
 NIGHT_START = "time.living_room_night_starts"
 
@@ -85,7 +89,7 @@ async def tick(hass: HomeAssistant, local_time, hour: int, minute: int = 0) -> N
 
 
 async def test_device_and_entities(hass: HomeAssistant, entry: MockConfigEntry) -> None:
-    """One device: a climate entity plus four configuration entities."""
+    """One device: a climate entity plus six configuration entities."""
     device_reg = dr.async_get(hass)
     devices = dr.async_entries_for_config_entry(device_reg, entry.entry_id)
     assert len(devices) == 1
@@ -100,15 +104,28 @@ async def test_device_and_entities(hass: HomeAssistant, entry: MockConfigEntry) 
         e.entity_id: e
         for e in er.async_entries_for_config_entry(entity_reg, entry.entry_id)
     }
-    assert set(entities) == {CLIMATE, DAY_TEMP, NIGHT_TEMP, DAY_START, NIGHT_START}
+    assert set(entities) == {
+        CLIMATE,
+        DAY_TEMP,
+        DAY_MAX,
+        NIGHT_TEMP,
+        NIGHT_MAX,
+        DAY_START,
+        NIGHT_START,
+    }
     assert all(e.device_id == device.id for e in entities.values())
     assert entities[CLIMATE].unique_id == f"{entry.entry_id}_climate"
     assert entities[CLIMATE].entity_category is None
-    for entity_id in (DAY_TEMP, NIGHT_TEMP, DAY_START, NIGHT_START):
+    for entity_id in (DAY_TEMP, DAY_MAX, NIGHT_TEMP, NIGHT_MAX, DAY_START, NIGHT_START):
         assert entities[entity_id].entity_category is EntityCategory.CONFIG
+    # The minimum keeps the unique ID it had before ranges existed.
+    assert entities[DAY_TEMP].unique_id == f"{entry.entry_id}_day_temp"
+    assert entities[DAY_MAX].unique_id == f"{entry.entry_id}_day_temp_high"
 
     assert hass.states.get(DAY_TEMP).state == "21.0"
     assert hass.states.get(NIGHT_TEMP).state == "17.0"
+    assert hass.states.get(DAY_MAX).state == "25.0"
+    assert hass.states.get(NIGHT_MAX).state == "24.0"
     assert hass.states.get(DAY_START).state == "06:00:00"
     assert hass.states.get(NIGHT_START).state == "22:00:00"
 
@@ -128,24 +145,29 @@ async def test_climate_defaults(hass: HomeAssistant, entry: MockConfigEntry) -> 
     assert attrs["hvac_modes"] == [
         HVACMode.HEAT,
         HVACMode.COOL,
-        HVACMode.AUTO,
+        HVACMode.HEAT_COOL,
         HVACMode.OFF,
     ]
     assert attrs["preset_modes"] == ["day", "night"]
     assert attrs[ATTR_PRESET_MODE] == "day"
     assert attrs[ATTR_TEMPERATURE] == 21.0
+    assert attrs[ATTR_TARGET_TEMP_LOW] is None
+    assert attrs[ATTR_TARGET_TEMP_HIGH] is None
     assert attrs["min_temp"] == 5
     assert attrs["max_temp"] == 30
     assert attrs["target_temp_step"] == 0.5
     assert attrs[ATTR_SUPPORTED_FEATURES] == (
         ClimateEntityFeature.TARGET_TEMPERATURE
+        | ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
         | ClimateEntityFeature.PRESET_MODE
         | ClimateEntityFeature.TURN_ON
         | ClimateEntityFeature.TURN_OFF
     )
     assert attrs["period"] == "day"
     assert attrs["day_temp"] == 21.0
+    assert attrs["day_temp_high"] == 25.0
     assert attrs["night_temp"] == 17.0
+    assert attrs["night_temp_high"] == 24.0
     assert attrs["day_start"] == "06:00:00"
     assert attrs["night_start"] == "22:00:00"
     assert attrs["override"] is False
@@ -155,7 +177,7 @@ async def test_climate_defaults(hass: HomeAssistant, entry: MockConfigEntry) -> 
 async def test_hvac_modes_and_turn_on(
     hass: HomeAssistant, entry: MockConfigEntry
 ) -> None:
-    """Heat, cool, auto and off are stored; turn_on restores the last one."""
+    """Heat, cool, heat_cool and off are stored; turn_on restores the last one."""
     await climate_call(hass, SERVICE_SET_HVAC_MODE, **{ATTR_HVAC_MODE: "cool"})
     assert hass.states.get(CLIMATE).state == HVACMode.COOL
 
@@ -165,14 +187,28 @@ async def test_hvac_modes_and_turn_on(
     await climate_call(hass, SERVICE_TURN_ON)
     assert hass.states.get(CLIMATE).state == HVACMode.COOL
 
-    # Auto takes no side; it is restored by turn_on like heat/cool.
-    await climate_call(hass, SERVICE_SET_HVAC_MODE, **{ATTR_HVAC_MODE: "auto"})
-    state = hass.states.get(CLIMATE)
-    assert state.state == HVACMode.AUTO
-    assert state.attributes[ATTR_TEMPERATURE] == 21.0
+    # heat_cool is restored by turn_on like heat/cool.
+    await climate_call(hass, SERVICE_SET_HVAC_MODE, **{ATTR_HVAC_MODE: "heat_cool"})
+    assert hass.states.get(CLIMATE).state == HVACMode.HEAT_COOL
     await climate_call(hass, SERVICE_TURN_OFF)
     await climate_call(hass, SERVICE_TURN_ON)
-    assert hass.states.get(CLIMATE).state == HVACMode.AUTO
+    assert hass.states.get(CLIMATE).state == HVACMode.HEAT_COOL
+
+
+async def test_target_per_mode(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    """Heat shows the minimum, cool the maximum, heat_cool the range, off none."""
+    expected = {
+        "heat": (21.0, None, None),
+        "cool": (25.0, None, None),
+        "heat_cool": (None, 21.0, 25.0),
+        "off": (None, None, None),
+    }
+    for mode, (temp, low, high) in expected.items():
+        await climate_call(hass, SERVICE_SET_HVAC_MODE, **{ATTR_HVAC_MODE: mode})
+        attrs = hass.states.get(CLIMATE).attributes
+        assert attrs[ATTR_TEMPERATURE] == temp, mode
+        assert attrs[ATTR_TARGET_TEMP_LOW] == low, mode
+        assert attrs[ATTR_TARGET_TEMP_HIGH] == high, mode
 
 
 async def test_set_temperature_changes_active_period(
@@ -184,17 +220,76 @@ async def test_set_temperature_changes_active_period(
     assert hass.states.get(NIGHT_TEMP).state == "17.0"
     assert hass.states.get(CLIMATE).attributes[ATTR_TEMPERATURE] == 22.5
 
+    # In cool mode the target is the maximum of the (night) period.
     await tick(hass, local_time, 23)
     await climate_call(
         hass,
         SERVICE_SET_TEMPERATURE,
-        **{ATTR_TEMPERATURE: 16, ATTR_HVAC_MODE: "cool"},
+        **{ATTR_TEMPERATURE: 23, ATTR_HVAC_MODE: "cool"},
     )
-    assert hass.states.get(NIGHT_TEMP).state == "16.0"
+    assert hass.states.get(NIGHT_MAX).state == "23.0"
+    assert hass.states.get(NIGHT_TEMP).state == "17.0"
     assert hass.states.get(DAY_TEMP).state == "22.5"
     state = hass.states.get(CLIMATE)
     assert state.state == HVACMode.COOL
-    assert state.attributes[ATTR_TEMPERATURE] == 16
+    assert state.attributes[ATTR_TEMPERATURE] == 23
+
+
+async def test_set_range(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    """A low/high pair sets the active period's range in any mode."""
+    await climate_call(
+        hass,
+        SERVICE_SET_TEMPERATURE,
+        **{
+            ATTR_HVAC_MODE: "heat_cool",
+            ATTR_TARGET_TEMP_LOW: 20,
+            ATTR_TARGET_TEMP_HIGH: 24.5,
+        },
+    )
+    attrs = hass.states.get(CLIMATE).attributes
+    assert attrs[ATTR_TARGET_TEMP_LOW] == 20
+    assert attrs[ATTR_TARGET_TEMP_HIGH] == 24.5
+    assert hass.states.get(DAY_TEMP).state == "20.0"
+    assert hass.states.get(DAY_MAX).state == "24.5"
+    assert hass.states.get(NIGHT_TEMP).state == "17.0"
+
+    # A single temperature in heat_cool centers the range on it.
+    await climate_call(hass, SERVICE_SET_TEMPERATURE, **{ATTR_TEMPERATURE: 23})
+    attrs = hass.states.get(CLIMATE).attributes
+    assert (attrs[ATTR_TARGET_TEMP_LOW], attrs[ATTR_TARGET_TEMP_HIGH]) == (21.0, 25.5)
+
+    # Near the limit the range keeps its width.
+    await climate_call(hass, SERVICE_SET_TEMPERATURE, **{ATTR_TEMPERATURE: 30})
+    attrs = hass.states.get(CLIMATE).attributes
+    assert (attrs[ATTR_TARGET_TEMP_LOW], attrs[ATTR_TARGET_TEMP_HIGH]) == (25.5, 30.0)
+
+
+async def test_min_range_is_kept(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    """Minimum and maximum stay at least 1 °C apart; the edited value wins."""
+    await set_number(hass, DAY_TEMP, 25)
+    assert hass.states.get(DAY_TEMP).state == "25.0"
+    assert hass.states.get(DAY_MAX).state == "26.0"
+
+    await set_number(hass, DAY_MAX, 20)
+    assert hass.states.get(DAY_MAX).state == "20.0"
+    assert hass.states.get(DAY_TEMP).state == "19.0"
+
+    # At the edges the pushed value is clamped and the edited one gives way.
+    await set_number(hass, NIGHT_TEMP, 30)
+    assert hass.states.get(NIGHT_TEMP).state == "29.0"
+    assert hass.states.get(NIGHT_MAX).state == "30.0"
+    await set_number(hass, NIGHT_MAX, 5)
+    assert hass.states.get(NIGHT_TEMP).state == "5.0"
+    assert hass.states.get(NIGHT_MAX).state == "6.0"
+
+    # Equal low/high from the climate action is widened, too.
+    await climate_call(
+        hass,
+        SERVICE_SET_TEMPERATURE,
+        **{ATTR_TARGET_TEMP_LOW: 22, ATTR_TARGET_TEMP_HIGH: 22},
+    )
+    assert hass.states.get(DAY_TEMP).state == "22.0"
+    assert hass.states.get(DAY_MAX).state == "23.0"
 
 
 async def test_set_temperature_out_of_range(
@@ -239,14 +334,18 @@ async def test_set_profile_action(hass: HomeAssistant, entry: MockConfigEntry) -
         {
             ATTR_ENTITY_ID: CLIMATE,
             "day_temperature": 20.5,
+            "day_temperature_high": 26,
             "night_temperature": 18,
+            "night_temperature_high": 23.5,
             "day_start": "05:30",
             "night_start": "23:00:00",
         },
         blocking=True,
     )
     assert hass.states.get(DAY_TEMP).state == "20.5"
+    assert hass.states.get(DAY_MAX).state == "26.0"
     assert hass.states.get(NIGHT_TEMP).state == "18.0"
+    assert hass.states.get(NIGHT_MAX).state == "23.5"
     assert hass.states.get(DAY_START).state == "05:30:00"
     assert hass.states.get(NIGHT_START).state == "23:00:00"
 
@@ -409,9 +508,10 @@ async def test_persistence_after_reload(
     """Values, mode and override survive a reload; times stored as ISO."""
     await set_number(hass, DAY_TEMP, 23)
     await set_number(hass, NIGHT_TEMP, 15.5)
+    await set_number(hass, NIGHT_MAX, 22)
     await set_time(hass, DAY_START, "05:45")
     await set_time(hass, NIGHT_START, "23:30")
-    await climate_call(hass, SERVICE_SET_HVAC_MODE, **{ATTR_HVAC_MODE: "auto"})
+    await climate_call(hass, SERVICE_SET_HVAC_MODE, **{ATTR_HVAC_MODE: "heat_cool"})
     await climate_call(hass, SERVICE_SET_PRESET_MODE, **{ATTR_PRESET_MODE: "night"})
 
     assert await hass.config_entries.async_reload(entry.entry_id)
@@ -421,16 +521,19 @@ async def test_persistence_after_reload(
     stored = hass_storage[f"{DOMAIN}.{entry.entry_id}"]["data"]
     assert stored["day_temp"] == 23.0
     assert stored["night_temp"] == 15.5
+    assert stored["night_temp_high"] == 22.0
+    assert stored["day_temp_high"] == 25.0
     assert stored["day_start"] == "05:45:00"
     assert stored["night_start"] == "23:30:00"
-    assert stored["hvac_mode"] == "auto"
+    assert stored["hvac_mode"] == "heat_cool"
     assert stored["override_period"] == "night"
     assert stored["override_until"].startswith("2026-01-15T23:30:00")
 
     state = hass.states.get(CLIMATE)
-    assert state.state == HVACMode.AUTO
+    assert state.state == HVACMode.HEAT_COOL
     assert state.attributes[ATTR_PRESET_MODE] == "night"
-    assert state.attributes[ATTR_TEMPERATURE] == 15.5
+    assert state.attributes[ATTR_TARGET_TEMP_LOW] == 15.5
+    assert state.attributes[ATTR_TARGET_TEMP_HIGH] == 22.0
     assert hass.states.get(DAY_TEMP).state == "23.0"
     assert hass.states.get(DAY_START).state == "05:45:00"
     assert hass.states.get(NIGHT_START).state == "23:30:00"
@@ -489,6 +592,33 @@ async def test_corrupt_storage_falls_back_to_defaults(
     state = hass.states.get(CLIMATE)
     assert state.state == HVACMode.HEAT
     assert state.attributes["override"] is False
+
+
+async def test_storage_from_0_3_0(hass: HomeAssistant, hass_storage) -> None:
+    """Profiles stored before ranges existed get a maximum and heat_cool."""
+    config_entry = MockConfigEntry(domain=DOMAIN, title="Living room", data={})
+    hass_storage[f"{DOMAIN}.{config_entry.entry_id}"] = {
+        "version": 1,
+        "key": f"{DOMAIN}.{config_entry.entry_id}",
+        "data": {
+            "day_temp": 21,
+            "night_temp": 24.5,
+            "day_start": "08:00:00",
+            "night_start": "23:00:00",
+            "hvac_mode": "auto",
+            "last_active_mode": "auto",
+        },
+    }
+    config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert hass.states.get(CLIMATE).state == HVACMode.HEAT_COOL
+    assert hass.states.get(DAY_TEMP).state == "21.0"
+    assert hass.states.get(DAY_MAX).state == "25.0"
+    # The default night maximum (24) would be below the stored minimum.
+    assert hass.states.get(NIGHT_TEMP).state == "24.5"
+    assert hass.states.get(NIGHT_MAX).state == "25.5"
 
 
 async def test_old_sensor_is_removed(hass: HomeAssistant) -> None:

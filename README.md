@@ -5,8 +5,9 @@
 [![Tests](https://github.com/yniverz/hacs_heating_profile/actions/workflows/tests.yml/badge.svg)](https://github.com/yniverz/hacs_heating_profile/actions/workflows/tests.yml)
 
 A virtual thermostat per room: one device with a **climate entity** that holds
-a day temperature, a night temperature, the times when day and night start,
-and a Heat / Cool / Auto / Off mode. It comes with its own **dashboard card**.
+a day and a night **temperature range** (minimum and maximum), the times when
+day and night start, and a Heat / Cool / Auto (range) / Off mode. It comes with
+its own **dashboard card**.
 
 It **controls nothing** by itself. It stores the values (they survive
 restarts) and shows the temperature that should be active right now, so your
@@ -50,12 +51,14 @@ name: Living room   # optional
 
 The card shows:
 
-- **A dial** with the active target temperature. Use − / + to change the
-  temperature of the current period.
+- **A dial** with the active target: the minimum in Heat, the maximum in Cool,
+  the whole range in Auto and Off. − / + changes the current period's
+  minimum, maximum or moves the whole range, respectively.
 - **A Day / Night badge**. Tap it to switch to the other period until the next
   scheduled switch ("Manual until 22:00").
-- **Heat, Cool, Auto and Off** buttons.
-- **Day and Night rows**, each with its temperature (− / +) and start time.
+- **Heat, Cool, Auto (range) and Off** buttons.
+- **Day and Night rows**, each with its minimum and maximum (− / +) and start
+  time. The end of the range the current mode doesn't use is dimmed.
 
 If the card doesn't show up right after installing or updating, reload the
 browser page (on the mobile app: Settings → Companion app → Debugging →
@@ -72,26 +75,43 @@ Entity IDs come from the name; for a profile called `Living room`:
 | Entity | Default | Notes |
 | --- | --- | --- |
 | `climate.living_room` | Heat, 21.0 °C | the main entity (see below) |
-| `number.living_room_day_temperature` | 21.0 °C | configuration, 5–30 °C, step 0.5 |
-| `number.living_room_night_temperature` | 17.0 °C | configuration, 5–30 °C, step 0.5 |
+| `number.living_room_day_minimum` | 21.0 °C | configuration, 5–30 °C, step 0.5 |
+| `number.living_room_day_maximum` | 25.0 °C | configuration, 5–30 °C, step 0.5 |
+| `number.living_room_night_minimum` | 17.0 °C | configuration, 5–30 °C, step 0.5 |
+| `number.living_room_night_maximum` | 24.0 °C | configuration, 5–30 °C, step 0.5 |
 | `time.living_room_day_starts` | 06:00 | configuration |
 | `time.living_room_night_starts` | 22:00 | configuration |
 
-The four settings entities are **configuration entities**. They appear under
+Minimum and maximum always stay at least 1 °C apart: if you move one past the
+other, the other one is pushed along.
+
+The six settings entities are **configuration entities**. They appear under
 the device's *Configuration* section and are left out of auto-generated
 dashboards, but automations can still use them.
 
 ### Climate entity
 
-- **State / HVAC mode:** `heat`, `cool`, `auto` or `off`. It's only stored, so
-  your automations decide what each mode means. `auto` takes no side: use it
-  when the target should be reached by heating *or* cooling, whichever the
-  room needs. Turning it on again restores the last mode (heat, cool or auto).
-- **Target temperature:** the day temperature between *Day starts* and *Night
-  starts*, otherwise the night temperature. The day range may cross midnight
-  (e.g. day 20:00 → night 04:00). If both times are equal, it is always night.
-  Setting the target (from the card, the Thermostat card or
-  `climate.set_temperature`) changes the temperature of the **current** period.
+- **State / HVAC mode:** `heat`, `cool`, `heat_cool` (shown as *Auto* in the
+  card) or `off`. It's only stored, so your automations decide what each mode
+  means. The intended meaning: heat up to the minimum, cool down to the
+  maximum, or keep the room inside the range with either. Turning it on again
+  restores the last mode (heat, cool or heat_cool).
+- **Period:** day between *Day starts* and *Night starts*, otherwise night.
+  The day range may cross midnight (e.g. day 20:00 → night 04:00). If both
+  times are equal, it is always night.
+- **Target:** follows the mode and the current period.
+
+  | Mode | `temperature` | `target_temp_low` / `target_temp_high` |
+  | --- | --- | --- |
+  | `heat` | minimum | – |
+  | `cool` | maximum | – |
+  | `heat_cool` | – | minimum / maximum (the Thermostat card shows two handles) |
+  | `off` | – | – |
+
+  Changing the target (from the card, the Thermostat card or
+  `climate.set_temperature`) changes the **current** period: `temperature`
+  sets the minimum (heat, off) or the maximum (cool), or centers the range on
+  it (heat_cool); `target_temp_low` / `target_temp_high` set both ends.
 - **Preset:** `day` or `night`, always the current period. Choosing the other
   preset forces it until the next scheduled switch. After that the schedule
   takes over again. Choosing the scheduled period again cancels the override.
@@ -101,11 +121,12 @@ dashboards, but automations can still use them.
 
 | Attribute | Example | |
 | --- | --- | --- |
-| `temperature` | `21.0` | active target (standard climate attribute) |
+| `temperature` | `21.0` | active target in heat/cool (standard climate attribute) |
+| `target_temp_low` / `target_temp_high` | `21.0` / `25.0` | active range in heat_cool (standard climate attributes) |
 | `preset_mode` | `day` | standard climate attribute |
 | `period` | `day` / `night` | same as the preset |
-| `day_temp` | `21.0` | |
-| `night_temp` | `17.0` | |
+| `day_temp` / `day_temp_high` | `21.0` / `25.0` | day minimum / maximum, in every mode |
+| `night_temp` / `night_temp_high` | `17.0` / `24.0` | night minimum / maximum, in every mode |
 | `day_start` | `06:00:00` | |
 | `night_start` | `22:00:00` | |
 | `override` | `false` | `true` while a manual day/night override is active |
@@ -123,8 +144,10 @@ action: heating_profile.set_profile
 target:
   entity_id: climate.living_room
 data:
-  day_temperature: 21.5
+  day_temperature: 21.5        # day minimum
+  day_temperature_high: 25     # day maximum
   night_temperature: 17
+  night_temperature_high: 23
   day_start: "06:30"
   night_start: "22:30"
 ```
@@ -133,7 +156,7 @@ The configuration entities work too: `number.set_value` and `time.set_value`.
 
 ## Automation examples
 
-Follow the profile with a real thermostat, respecting the mode:
+Follow the profile with a real thermostat (heat/cool/off):
 
 ```yaml
 automation:
@@ -142,6 +165,10 @@ automation:
       # Without to/from this fires on mode and attribute (target) changes.
       - trigger: state
         entity_id: climate.living_room
+    conditions:
+      - condition: state
+        entity_id: climate.living_room
+        state: [heat, cool, "off"]
     actions:
       - action: climate.set_hvac_mode
         target:
@@ -156,6 +183,10 @@ automation:
             data:
               temperature: "{{ state_attr('climate.living_room', 'temperature') }}"
 ```
+
+In `heat_cool`, read the range of the current period with
+`state_attr('climate.living_room', 'target_temp_low')` and `'target_temp_high'`
+and decide yourself whether to heat, cool or do nothing.
 
 React to the switch between day and night:
 
@@ -178,7 +209,8 @@ Templates:
 ```jinja
 {{ state_attr('climate.living_room', 'period') }}              {# day / night #}
 {{ is_state_attr('climate.living_room', 'period', 'day') }}    {# true / false #}
-{{ state_attr('climate.living_room', 'temperature') }}         {# active target #}
+{{ state_attr('climate.living_room', 'temperature') }}         {# target in heat/cool #}
+{{ state_attr('climate.living_room', 'target_temp_low') }}     {# minimum in heat_cool #}
 {{ is_state('climate.living_room', 'heat') }}                  {# heating mode? #}
 ```
 
@@ -191,6 +223,20 @@ target:
 data:
   day_start: "{{ '08:00' if now().weekday() >= 5 else '06:00' }}"
 ```
+
+## Upgrading from 0.3.x
+
+- Each period got a **maximum**; your existing temperatures become the
+  minimum. New maximums default to 25 °C (day) and 24 °C (night), or 1 °C
+  above the minimum if that's higher.
+- The **Auto** mode is now the standard `heat_cool` mode and holds the range.
+  A stored `auto` is converted automatically; automations that set
+  `hvac_mode: auto` need to use `heat_cool`.
+- `temperature` is now empty in heat_cool and off; use `target_temp_low` /
+  `target_temp_high`, or `day_temp` / `night_temp`, which are always set.
+- Existing entities keep their entity IDs (e.g.
+  `number.living_room_day_temperature`); only their names change to
+  *Day minimum* / *Night minimum*.
 
 ## Storage
 

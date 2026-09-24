@@ -1,4 +1,4 @@
-"""Day/night temperature settings."""
+"""Day/night minimum and maximum temperature settings."""
 
 from __future__ import annotations
 
@@ -15,10 +15,17 @@ from . import HeatingProfileConfigEntry
 from .const import MAX_TEMP, MIN_TEMP, TEMP_STEP
 from .entity import HeatingProfileEntity
 
-# The key doubles as the attribute name on HeatingProfileData.
+# The key doubles as the attribute name on HeatingProfileData. The minimum
+# keeps its pre-0.4.0 key so existing entities keep their entity IDs.
 DESCRIPTIONS = (
     NumberEntityDescription(key="day_temp", translation_key="day_temperature"),
+    NumberEntityDescription(
+        key="day_temp_high", translation_key="day_temperature_high"
+    ),
     NumberEntityDescription(key="night_temp", translation_key="night_temperature"),
+    NumberEntityDescription(
+        key="night_temp_high", translation_key="night_temperature_high"
+    ),
 )
 
 

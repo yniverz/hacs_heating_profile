@@ -17,8 +17,14 @@
       "day_temperature": {
         "default": "mdi:weather-sunny"
       },
+      "day_temperature_high": {
+        "default": "mdi:thermometer-chevron-up"
+      },
       "night_temperature": {
         "default": "mdi:weather-night"
+      },
+      "night_temperature_high": {
+        "default": "mdi:thermometer-chevron-up"
       }
     },
     "time": {

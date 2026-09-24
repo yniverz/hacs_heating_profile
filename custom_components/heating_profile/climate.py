@@ -7,6 +7,8 @@ from typing import Any
 
 from homeassistant.components.climate import (
     ATTR_HVAC_MODE,
+    ATTR_TARGET_TEMP_HIGH,
+    ATTR_TARGET_TEMP_LOW,
     ClimateEntity,
     ClimateEntityFeature,
     HVACMode,
@@ -24,8 +26,12 @@ from . import HeatingProfileConfigEntry
 from .const import (
     ATTR_DAY_START,
     ATTR_DAY_TEMPERATURE,
+    ATTR_DAY_TEMPERATURE_HIGH,
     ATTR_NIGHT_START,
     ATTR_NIGHT_TEMPERATURE,
+    ATTR_NIGHT_TEMPERATURE_HIGH,
+    HVAC_MODE_COOL,
+    HVAC_MODE_HEAT_COOL,
     HVAC_MODE_OFF,
     MAX_TEMP,
     MIN_TEMP,
@@ -41,7 +47,9 @@ DESCRIPTION = EntityDescription(key="climate", translation_key="profile")
 _TEMPERATURE = vol.All(vol.Coerce(float), vol.Range(min=MIN_TEMP, max=MAX_TEMP))
 SET_PROFILE_SCHEMA: dict[vol.Marker, Any] = {
     vol.Optional(ATTR_DAY_TEMPERATURE): _TEMPERATURE,
+    vol.Optional(ATTR_DAY_TEMPERATURE_HIGH): _TEMPERATURE,
     vol.Optional(ATTR_NIGHT_TEMPERATURE): _TEMPERATURE,
+    vol.Optional(ATTR_NIGHT_TEMPERATURE_HIGH): _TEMPERATURE,
     vol.Optional(ATTR_DAY_START): cv.time,
     vol.Optional(ATTR_NIGHT_START): cv.time,
 }
@@ -62,14 +70,24 @@ async def async_setup_entry(
 
 
 class HeatingProfileClimate(HeatingProfileEntity, ClimateEntity):
-    """Shows the active target temperature; changes go to the stored profile."""
+    """Shows the active target or range; changes go to the stored profile.
+
+    Heat shows the period's minimum as the target, cool its maximum and
+    heat_cool the whole range (the Thermostat card then shows two handles).
+    """
 
     # The entity takes the device name, e.g. climate.living_room.
     _attr_name = None
-    _attr_hvac_modes = [HVACMode.HEAT, HVACMode.COOL, HVACMode.AUTO, HVACMode.OFF]
+    _attr_hvac_modes = [
+        HVACMode.HEAT,
+        HVACMode.COOL,
+        HVACMode.HEAT_COOL,
+        HVACMode.OFF,
+    ]
     _attr_preset_modes = [PERIOD_DAY, PERIOD_NIGHT]
     _attr_supported_features = (
         ClimateEntityFeature.TARGET_TEMPERATURE
+        | ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
         | ClimateEntityFeature.PRESET_MODE
         | ClimateEntityFeature.TURN_ON
         | ClimateEntityFeature.TURN_OFF
@@ -97,9 +115,27 @@ class HeatingProfileClimate(HeatingProfileEntity, ClimateEntity):
         return HVACMode(self._data.hvac_mode)
 
     @property
-    def target_temperature(self) -> float:
-        """Return the temperature of the active period."""
-        return self._data.target_temperature(dt_util.utcnow())
+    def target_temperature(self) -> float | None:
+        """Return the target of the active period: minimum, or maximum when cooling."""
+        mode = self._data.hvac_mode
+        if mode in (HVAC_MODE_HEAT_COOL, HVAC_MODE_OFF):
+            return None
+        low, high = self._data.target_range(dt_util.utcnow())
+        return high if mode == HVAC_MODE_COOL else low
+
+    @property
+    def target_temperature_low(self) -> float | None:
+        """Return the minimum of the active period in heat_cool mode."""
+        if self._data.hvac_mode != HVAC_MODE_HEAT_COOL:
+            return None
+        return self._data.target_range(dt_util.utcnow())[0]
+
+    @property
+    def target_temperature_high(self) -> float | None:
+        """Return the maximum of the active period in heat_cool mode."""
+        if self._data.hvac_mode != HVAC_MODE_HEAT_COOL:
+            return None
+        return self._data.target_range(dt_util.utcnow())[1]
 
     @property
     def preset_mode(self) -> str:
@@ -114,7 +150,9 @@ class HeatingProfileClimate(HeatingProfileEntity, ClimateEntity):
         return {
             "period": data.period(now),
             "day_temp": data.day_temp,
+            "day_temp_high": data.day_temp_high,
             "night_temp": data.night_temp,
+            "night_temp_high": data.night_temp_high,
             "day_start": data.day_start.isoformat(),
             "night_start": data.night_start.isoformat(),
             "override": data.override_active(now),
@@ -126,18 +164,37 @@ class HeatingProfileClimate(HeatingProfileEntity, ClimateEntity):
         }
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
-        """Change the temperature of the active period (and optionally mode)."""
+        """Change the range of the active period (and optionally the mode).
+
+        A single temperature sets the minimum (heat, off), the maximum (cool)
+        or moves the whole range so it is centered on it (heat_cool).
+        """
         if (mode := kwargs.get(ATTR_HVAC_MODE)) is not None:
             await self.async_set_hvac_mode(mode)
+        now = dt_util.utcnow()
+        low = kwargs.get(ATTR_TARGET_TEMP_LOW)
+        high = kwargs.get(ATTR_TARGET_TEMP_HIGH)
         if (temperature := kwargs.get(ATTR_TEMPERATURE)) is not None:
-            self._data.async_set_active_temperature(temperature, dt_util.utcnow())
+            mode = self._data.hvac_mode
+            if mode == HVAC_MODE_COOL:
+                high = temperature
+            elif mode == HVAC_MODE_HEAT_COOL:
+                cur_low, cur_high = self._data.target_range(now)
+                width = cur_high - cur_low
+                low = round((temperature - width / 2) / TEMP_STEP) * TEMP_STEP
+                low = min(max(low, MIN_TEMP), MAX_TEMP - width)
+                high = low + width
+            else:
+                low = temperature
+        if low is not None or high is not None:
+            self._data.async_set_active_range(now, low, high)
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Store the mode."""
         self._data.async_update(hvac_mode=str(hvac_mode))
 
     async def async_turn_on(self) -> None:
-        """Restore the last heat/cool/auto mode."""
+        """Restore the last heat/cool/heat_cool mode."""
         self._data.async_update(hvac_mode=self._data.last_active_mode)
 
     async def async_turn_off(self) -> None:
@@ -151,14 +208,18 @@ class HeatingProfileClimate(HeatingProfileEntity, ClimateEntity):
     async def async_set_profile(
         self,
         day_temperature: float | None = None,
+        day_temperature_high: float | None = None,
         night_temperature: float | None = None,
+        night_temperature_high: float | None = None,
         day_start: time | None = None,
         night_start: time | None = None,
     ) -> None:
         """Change any of the stored settings at once."""
         changes: dict[str, Any] = {
             "day_temp": day_temperature,
+            "day_temp_high": day_temperature_high,
             "night_temp": night_temperature,
+            "night_temp_high": night_temperature_high,
             "day_start": day_start,
             "night_start": night_start,
         }

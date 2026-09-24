@@ -1,6 +1,6 @@
 /*
  * Heating Profile card: a thermostat-style dial for a heating_profile climate
- * entity, plus day/night temperature and start time controls.
+ * entity, plus day/night temperature range and start time controls.
  *
  * Served and loaded automatically by the heating_profile integration.
  */
@@ -12,21 +12,37 @@ const DEBOUNCE_MS = 800;
 const MODES = [
   { mode: "heat", icon: "mdi:fire", label: "Heat" },
   { mode: "cool", icon: "mdi:snowflake", label: "Cool" },
-  { mode: "auto", icon: "mdi:thermostat-auto", label: "Auto" },
+  { mode: "heat_cool", icon: "mdi:sun-snowflake-variant", label: "Auto (range)" },
   { mode: "off", icon: "mdi:power", label: "Off" },
 ];
 
 const MODE_COLORS = {
   heat: "var(--state-climate-heat-color, #ff8100)",
   cool: "var(--state-climate-cool-color, #2b9af9)",
-  auto: "var(--state-climate-auto-color, #008000)",
+  heat_cool: "var(--state-climate-heat_cool-color, #ffa600)",
   off: "var(--state-climate-off-color, var(--disabled-color, #8a8a8a))",
 };
 
+// low = minimum (heating aims for it), high = maximum (cooling aims for it).
 const PERIODS = {
-  day: { icon: "mdi:weather-sunny", label: "Day", attr: "day_temp", start: "day_start" },
-  night: { icon: "mdi:weather-night", label: "Night", attr: "night_temp", start: "night_start" },
+  day: { icon: "mdi:weather-sunny", label: "Day", low: "day_temp", high: "day_temp_high", start: "day_start" },
+  night: { icon: "mdi:weather-night", label: "Night", low: "night_temp", high: "night_temp_high", start: "night_start" },
 };
+
+// Attribute -> field of heating_profile.set_profile
+const FIELDS = {
+  day_temp: "day_temperature",
+  day_temp_high: "day_temperature_high",
+  night_temp: "night_temperature",
+  night_temp_high: "night_temperature_high",
+};
+
+// Which end of the range the dial and the single target follow per mode.
+function activeEnds(mode) {
+  if (mode === "heat") return ["low"];
+  if (mode === "cool") return ["high"];
+  return ["low", "high"];
+}
 
 // Dial geometry: a 270° arc opening at the bottom.
 const CX = 100;
@@ -79,6 +95,7 @@ const STYLE = `
   .target { font-size: 3rem; font-weight: 400; line-height: 1; color: var(--primary-text-color);
             font-variant-numeric: tabular-nums; }
   .target .unit { font-size: 1.25rem; vertical-align: top; margin-left: 2px; color: var(--secondary-text-color); }
+  .target.range { font-size: 2.1rem; }
   .period { display: flex; align-items: center; gap: 4px; margin-top: 8px; padding: 4px 10px;
             border-radius: 16px; background: var(--secondary-background-color, rgba(127,127,127,.12));
             color: var(--primary-text-color); font-size: .9rem; }
@@ -94,15 +111,19 @@ const STYLE = `
           transition: background .2s, color .2s; }
   .mode.active { color: #fff; background: var(--active-color); }
   .rows { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
-  .row { display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 12px; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 8px; border-radius: 12px; }
   .row.active { background: var(--secondary-background-color, rgba(127,127,127,.12)); }
   .row > ha-icon { color: var(--secondary-text-color); flex: none; }
   .row.active > ha-icon { color: var(--mode-color); }
-  .label { flex: 1; min-width: 0; }
+  .label { flex: 1 1 auto; min-width: 8.5em; }
   .name { color: var(--primary-text-color); font-weight: 500; }
   .starts { display: flex; align-items: center; gap: 6px; font-size: .85rem; color: var(--secondary-text-color); }
   input[type=time] { font: inherit; color: var(--primary-text-color); background: transparent;
                      border: 1px solid var(--divider-color, rgba(127,127,127,.3)); border-radius: 6px; padding: 2px 4px; }
+  .limits { display: flex; flex-direction: column; gap: 2px; flex: none; margin-left: auto; }
+  .limit { display: flex; align-items: center; gap: 4px; transition: opacity .2s; }
+  .limit.dim { opacity: .45; }
+  .cap { font-size: .75rem; color: var(--secondary-text-color); width: 2.2em; text-align: right; }
   .stepper { display: flex; align-items: center; gap: 4px; flex: none; }
   .step { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
           color: var(--primary-text-color); }
@@ -116,7 +137,7 @@ class HeatingProfileCard extends HTMLElement {
   constructor() {
     super();
     this._pending = {};
-    this._timers = {};
+    this._timer = undefined;
     this.attachShadow({ mode: "open" });
   }
 
@@ -171,7 +192,8 @@ class HeatingProfileCard extends HTMLElement {
             <svg viewBox="0 0 200 200" aria-hidden="true">
               <path class="track" d="${arcPath(ARC_START, ARC_START + ARC_SWEEP)}"></path>
               <path class="value"></path>
-              <circle class="knob" r="7"></circle>
+              <circle class="knob" data-knob="low" r="7"></circle>
+              <circle class="knob" data-knob="high" r="7"></circle>
             </svg>
             <div class="center">
               <div class="target"><span class="target-value"></span><span class="unit"></span></div>
@@ -199,10 +221,23 @@ class HeatingProfileCard extends HTMLElement {
                   <div class="name">${p.label}</div>
                   <label class="starts">starts <input type="time" data-start="${p.start}"></label>
                 </div>
-                <div class="stepper">
-                  <button class="step" data-attr="${p.attr}" data-dir="-1" aria-label="Lower ${p.label.toLowerCase()} temperature"><ha-icon icon="mdi:minus"></ha-icon></button>
-                  <span class="val" data-val="${p.attr}"></span>
-                  <button class="step" data-attr="${p.attr}" data-dir="1" aria-label="Raise ${p.label.toLowerCase()} temperature"><ha-icon icon="mdi:plus"></ha-icon></button>
+                <div class="limits">
+                  ${[
+                    ["low", "min", "minimum"],
+                    ["high", "max", "maximum"],
+                  ]
+                    .map(
+                      ([end, cap, word]) => `
+                  <div class="limit" data-end="${end}">
+                    <span class="cap">${cap}</span>
+                    <div class="stepper">
+                      <button class="step" data-attr="${p[end]}" data-dir="-1" aria-label="Lower ${p.label.toLowerCase()} ${word}"><ha-icon icon="mdi:minus"></ha-icon></button>
+                      <span class="val" data-val="${p[end]}"></span>
+                      <button class="step" data-attr="${p[end]}" data-dir="1" aria-label="Raise ${p.label.toLowerCase()} ${word}"><ha-icon icon="mdi:plus"></ha-icon></button>
+                    </div>
+                  </div>`
+                    )
+                    .join("")}
                 </div>
               </div>`
               )
@@ -267,22 +302,37 @@ class HeatingProfileCard extends HTMLElement {
     const period = a.period || a.preset_mode || "day";
     const periodInfo = PERIODS[period] || PERIODS.day;
     const { min, max } = this._limits(a);
-    const target = this._pending.active ?? a.temperature;
+    const low = this._value(periodInfo.low, a);
+    const high = this._value(periodInfo.high, a);
+    const ends = activeEnds(mode);
+    const isRange = ends.length === 2;
     const card = root.querySelector("ha-card");
 
     card.style.setProperty("--mode-color", MODE_COLORS[mode] || MODE_COLORS.heat);
     card.classList.toggle("off", mode === "off");
     title.textContent = this._config.name || a.friendly_name || this._config.entity;
 
-    // Dial
-    const fraction = Math.min(1, Math.max(0, (Number(target) - min) / (max - min || 1)));
-    const end = ARC_START + ARC_SWEEP * fraction;
-    root.querySelector(".value").setAttribute("d", arcPath(ARC_START, end));
-    const [kx, ky] = polar(end);
-    const knob = root.querySelector(".knob");
-    knob.setAttribute("cx", kx.toFixed(2));
-    knob.setAttribute("cy", ky.toFixed(2));
-    root.querySelector(".target-value").textContent = target == null ? "–" : formatTemp(target);
+    // Dial: an arc from the start to the target, or across the whole range.
+    const frac = (v) => Math.min(1, Math.max(0, (Number(v) - min) / (max - min || 1)));
+    const single = mode === "cool" ? high : low;
+    const from = isRange ? ARC_START + ARC_SWEEP * frac(low) : ARC_START;
+    const to = ARC_START + ARC_SWEEP * frac(isRange ? high : single);
+    root.querySelector(".value").setAttribute("d", arcPath(from, to));
+    const place = (knob, angle, show) => {
+      const [x, y] = polar(angle);
+      knob.setAttribute("cx", x.toFixed(2));
+      knob.setAttribute("cy", y.toFixed(2));
+      knob.style.display = show ? "" : "none";
+    };
+    place(root.querySelector('[data-knob="low"]'), isRange ? from : to, true);
+    place(root.querySelector('[data-knob="high"]'), to, isRange);
+    const targetEl = root.querySelector(".target");
+    targetEl.classList.toggle("range", isRange);
+    root.querySelector(".target-value").textContent = isRange
+      ? `${low == null ? "–" : formatTemp(low)}–${high == null ? "–" : formatTemp(high)}`
+      : single == null
+        ? "–"
+        : formatTemp(single);
     root.querySelector(".unit").textContent = this._hass.config?.unit_system?.temperature || "°C";
 
     const periodBtn = root.querySelector(".period");
@@ -299,17 +349,23 @@ class HeatingProfileCard extends HTMLElement {
       btn.setAttribute("aria-pressed", String(active));
     });
 
-    // Day/night rows
+    // Day/night rows; the end of the range the mode does not use is dimmed.
     root.querySelectorAll(".row").forEach((row) => {
       const info = PERIODS[row.dataset.period];
-      const isActive = row.dataset.period === period;
-      row.classList.toggle("active", isActive);
-      const value =
-        this._pending[info.attr] ?? (isActive ? this._pending.active : undefined) ?? a[info.attr];
-      row.querySelector(".val").textContent = value == null ? "–" : `${formatTemp(value)} °C`;
+      row.classList.toggle("active", row.dataset.period === period);
+      row.querySelectorAll(".limit").forEach((limit) => {
+        const attr = info[limit.dataset.end];
+        const value = this._value(attr, a);
+        limit.querySelector(".val").textContent = value == null ? "–" : `${formatTemp(value)} °C`;
+        limit.classList.toggle("dim", mode !== "off" && !ends.includes(limit.dataset.end));
+      });
       const input = row.querySelector("input[type=time]");
       if (this.shadowRoot.activeElement !== input) input.value = hhmm(a[info.start]);
     });
+  }
+
+  _value(attr, attrs) {
+    return this._pending[attr] ?? attrs[attr];
   }
 
   _clamp(value, attrs) {
@@ -318,13 +374,19 @@ class HeatingProfileCard extends HTMLElement {
     return Math.min(max, Math.max(min, Number(rounded.toFixed(2))));
   }
 
-  _debounce(key, fn) {
-    clearTimeout(this._timers[key]);
-    this._timers[key] = setTimeout(async () => {
+  // Collect changes to several settings and send them in one call.
+  _queue(changes) {
+    Object.assign(this._pending, changes);
+    this._update();
+    clearTimeout(this._timer);
+    this._timer = setTimeout(async () => {
+      const pending = this._pending;
+      this._pending = {};
+      const data = {};
+      for (const [attr, value] of Object.entries(pending)) data[FIELDS[attr]] = value;
       try {
-        await fn();
+        await this._callProfile(data);
       } finally {
-        delete this._pending[key];
         this._update();
       }
     }, DEBOUNCE_MS);
@@ -334,28 +396,23 @@ class HeatingProfileCard extends HTMLElement {
     const stateObj = this._stateObj;
     if (!stateObj) return;
     const a = stateObj.attributes;
-    const current = this._pending.active ?? a.temperature;
-    const next = this._clamp(Number(current) + dir * this._limits(a).step, a);
-    this._pending.active = next;
-    this._update();
-    this._debounce("active", () =>
-      this._hass.callService("climate", "set_temperature", {
-        entity_id: this._config.entity,
-        temperature: next,
-      })
-    );
+    const info = PERIODS[a.period || a.preset_mode] || PERIODS.day;
+    const step = this._limits(a).step;
+    // Heat moves the minimum, cool the maximum, heat_cool and off the range.
+    const changes = {};
+    for (const end of activeEnds(stateObj.state)) {
+      const attr = info[end];
+      changes[attr] = this._clamp(Number(this._value(attr, a)) + dir * step, a);
+    }
+    this._queue(changes);
   }
 
   _stepSetting(attr, dir) {
     const stateObj = this._stateObj;
     if (!stateObj) return;
     const a = stateObj.attributes;
-    const current = this._pending[attr] ?? a[attr];
-    const next = this._clamp(Number(current) + dir * this._limits(a).step, a);
-    this._pending[attr] = next;
-    this._update();
-    const field = attr === "day_temp" ? "day_temperature" : "night_temperature";
-    this._debounce(attr, () => this._callProfile({ [field]: next }));
+    const next = this._clamp(Number(this._value(attr, a)) + dir * this._limits(a).step, a);
+    this._queue({ [attr]: next });
   }
 
   _callProfile(data) {
@@ -438,7 +495,7 @@ if (!customElements.get(CARD_TYPE)) {
   window.customCards.push({
     type: CARD_TYPE,
     name: "Heating Profile",
-    description: "Thermostat dial with day/night temperatures and start times.",
+    description: "Thermostat dial with day/night temperature ranges and start times.",
     preview: true,
     documentationURL: "https://github.com/yniverz/hacs_heating_profile",
   });

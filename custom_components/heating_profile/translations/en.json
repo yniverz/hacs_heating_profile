@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Create a heating profile",
-        "description": "A thermostat-like device with day/night temperatures for one room. It controls nothing; your automations read its values.",
+        "description": "A thermostat-like device with a day and a night temperature range for one room. It controls nothing; your automations read its values.",
         "data": {
           "name": "Name"
         }
@@ -25,10 +25,16 @@
     },
     "number": {
       "day_temperature": {
-        "name": "Day temperature"
+        "name": "Day minimum"
+      },
+      "day_temperature_high": {
+        "name": "Day maximum"
       },
       "night_temperature": {
-        "name": "Night temperature"
+        "name": "Night minimum"
+      },
+      "night_temperature_high": {
+        "name": "Night maximum"
       }
     },
     "time": {
@@ -43,15 +49,23 @@
   "services": {
     "set_profile": {
       "name": "Set profile",
-      "description": "Changes the day/night temperatures and start times of a heating profile.",
+      "description": "Changes the day/night temperature ranges and start times of a heating profile.",
       "fields": {
         "day_temperature": {
-          "name": "Day temperature",
-          "description": "Target temperature during the day."
+          "name": "Day minimum",
+          "description": "Lowest temperature during the day; heating aims for it."
+        },
+        "day_temperature_high": {
+          "name": "Day maximum",
+          "description": "Highest temperature during the day; cooling aims for it."
         },
         "night_temperature": {
-          "name": "Night temperature",
-          "description": "Target temperature during the night."
+          "name": "Night minimum",
+          "description": "Lowest temperature during the night; heating aims for it."
+        },
+        "night_temperature_high": {
+          "name": "Night maximum",
+          "description": "Highest temperature during the night; cooling aims for it."
         },
         "day_start": {
           "name": "Day starts",
