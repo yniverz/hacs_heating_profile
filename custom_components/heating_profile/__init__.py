@@ -1,12 +1,13 @@
 """The Heating Profile integration.
 
-A virtual thermostat-like device that controls nothing. It stores day/night
-temperature ranges, start times and a heat/cool/heat_cool/off mode that
-automations can read.
+A virtual thermostat-like device that stores day/night temperature ranges,
+start times and a heat/cool/heat_cool/off mode. Optionally (options flow) it
+drives an air conditioner from a room sensor to keep that range.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from homeassistant.components.frontend import add_extra_js_url
@@ -19,14 +20,67 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
 
-from .const import CARD_FILENAME, CARD_URL, DOMAIN, STORAGE_VERSION
+from .const import (
+    CARD_FILENAME,
+    CARD_URL,
+    CONTROL_STORAGE_VERSION,
+    DOMAIN,
+    STORAGE_VERSION,
+)
+from .controller import ClimateController, control_configured, control_storage_key
 from .profile import HeatingProfileData, storage_key
 
-PLATFORMS: list[Platform] = [Platform.CLIMATE, Platform.NUMBER, Platform.TIME]
+PLATFORMS: list[Platform] = [
+    Platform.BUTTON,
+    Platform.CLIMATE,
+    Platform.NUMBER,
+    Platform.SENSOR,
+    Platform.SWITCH,
+    Platform.TIME,
+]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-type HeatingProfileConfigEntry = ConfigEntry[HeatingProfileData]
+# Entities that only exist while the profile controls an AC (key -> platform).
+_CONTROL_ENTITIES: dict[str, Platform] = {
+    "control": Platform.SWITCH,
+    "end_pause": Platform.BUTTON,
+    "offset_heat": Platform.NUMBER,
+    "offset_cool": Platform.NUMBER,
+    **{
+        key: Platform.SENSOR
+        for key in (
+            "control_status",
+            "control_reason",
+            "control_state",
+            "room_average",
+            "room_trend",
+            "forecast_min",
+            "forecast_max",
+            "forecast_radiation",
+            "ac_setpoint",
+            "waiting_until",
+            "paused_until",
+        )
+    },
+}
+CONTROL_ENTITY_KEYS = tuple(_CONTROL_ENTITIES)
+
+
+def platform_for_key(key: str) -> Platform:
+    """Platform of a control entity."""
+    return _CONTROL_ENTITIES[key]
+
+
+@dataclass
+class HeatingProfileRuntime:
+    """Runtime data of an entry: the profile and its optional control."""
+
+    profile: HeatingProfileData
+    controller: ClimateController | None
+
+
+type HeatingProfileConfigEntry = ConfigEntry[HeatingProfileRuntime]
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -56,9 +110,29 @@ async def async_setup_entry(
 
     data = HeatingProfileData(hass, entry.entry_id)
     await data.async_load()
-    entry.runtime_data = data
+    controller = None
+    if control_configured(dict(entry.options)):
+        controller = ClimateController(hass, entry.entry_id, data, dict(entry.options))
+    else:
+        # The control was removed in the options: drop its entities.
+        for key in CONTROL_ENTITY_KEYS:
+            if entity_id := ent_reg.async_get_entity_id(
+                platform_for_key(key), DOMAIN, f"{entry.entry_id}_{key}"
+            ):
+                ent_reg.async_remove(entity_id)
+    entry.runtime_data = HeatingProfileRuntime(data, controller)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    if controller is not None:
+        await controller.async_start()
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     return True
+
+
+async def _async_options_updated(
+    hass: HomeAssistant, entry: HeatingProfileConfigEntry
+) -> None:
+    """Apply changed options by reloading the entry."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(
@@ -66,7 +140,10 @@ async def async_unload_entry(
 ) -> bool:
     """Unload a config entry."""
     # Flush pending delayed saves so a reload reads the latest values.
-    await entry.runtime_data.async_flush()
+    runtime = entry.runtime_data
+    if runtime.controller is not None:
+        await runtime.controller.async_stop()
+    await runtime.profile.async_flush()
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
@@ -75,3 +152,6 @@ async def async_remove_entry(
 ) -> None:
     """Delete the stored settings when the entry is removed."""
     await Store(hass, STORAGE_VERSION, storage_key(entry.entry_id)).async_remove()
+    await Store(
+        hass, CONTROL_STORAGE_VERSION, control_storage_key(entry.entry_id)
+    ).async_remove()

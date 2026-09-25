@@ -25,6 +25,12 @@
       },
       "night_temperature_high": {
         "default": "mdi:thermometer-chevron-up"
+      },
+      "offset_heat": {
+        "default": "mdi:thermometer-plus"
+      },
+      "offset_cool": {
+        "default": "mdi:thermometer-minus"
       }
     },
     "time": {
@@ -33,6 +39,65 @@
       },
       "night_start": {
         "default": "mdi:weather-sunset-down"
+      }
+    },
+    "switch": {
+      "control": {
+        "default": "mdi:robot",
+        "state": {
+          "off": "mdi:robot-off"
+        }
+      }
+    },
+    "button": {
+      "end_pause": {
+        "default": "mdi:play-circle-outline"
+      }
+    },
+    "sensor": {
+      "control_status": {
+        "default": "mdi:thermostat-auto"
+      },
+      "control_reason": {
+        "default": "mdi:comment-question-outline"
+      },
+      "control_state": {
+        "default": "mdi:state-machine",
+        "state": {
+          "heating": "mdi:fire",
+          "cooling": "mdi:snowflake",
+          "waiting": "mdi:timer-sand",
+          "away": "mdi:home-export-outline",
+          "paused": "mdi:pause-circle-outline",
+          "off": "mdi:power",
+          "disabled": "mdi:robot-off",
+          "idle": "mdi:fan",
+          "unavailable": "mdi:alert-circle-outline"
+        }
+      },
+      "room_average": {
+        "default": "mdi:home-thermometer"
+      },
+      "room_trend": {
+        "default": "mdi:trending-up"
+      },
+      "forecast_min": {
+        "default": "mdi:thermometer-low"
+      },
+      "forecast_max": {
+        "default": "mdi:thermometer-high"
+      },
+      "forecast_radiation": {
+        "default": "mdi:weather-sunny"
+      },
+      "ac_setpoint": {
+        "default": "mdi:thermostat"
+      },
+      "waiting_until": {
+        "default": "mdi:timer-sand"
+      },
+      "paused_until": {
+        "default": "mdi:pause-circle-outline"
       }
     }
   },

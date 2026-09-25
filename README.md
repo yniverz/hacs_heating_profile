@@ -9,9 +9,11 @@ a day and a night **temperature range** (minimum and maximum), the times when
 day and night start, and a Heat / Cool / Auto (range) / Off mode. It comes with
 its own **dashboard card**.
 
-It **controls nothing** by itself. It stores the values (they survive
-restarts) and shows the temperature that should be active right now, so your
-own automations can drive real thermostats, TRVs or air conditioners.
+On its own it only stores the values (they survive restarts) and shows the
+range that applies right now, so your automations can drive thermostats or
+TRVs. Optionally it drives an **air conditioner** itself: pick a room sensor
+and the AC under *Configure* and it keeps the room in the range, see
+[Climate control](#climate-control).
 
 ## Installation
 
@@ -238,10 +240,81 @@ data:
   `number.living_room_day_temperature`); only their names change to
   *Day minimum* / *Night minimum*.
 
+## Climate control
+
+**Settings → Devices & services → Heating Profile → Configure** (per profile).
+
+### Sources
+
+| Field | |
+| --- | --- |
+| Room temperature sensor | The control decides only on this sensor (averaged). Required. |
+| Air conditioner | Climate entity that gets the commands. Required. |
+| Compressor running sensor | Optional. Binary sensor, on while the compressor runs. Lets the control raise the setpoint offset. |
+| Presence | Optional. Binary sensor, person or device tracker; on/home = present, unavailable counts as present. |
+| Use the weather forecast | Hourly Open-Meteo forecast for the Home Assistant location (no API key). |
+
+Leave room sensor and AC empty to turn the control off again; its entities
+are removed, the other settings are kept.
+
+### How it works
+
+Every minute the control compares the room temperature (averaged over 10 min)
+with the profile's range for the current period:
+
+| Profile mode | The control |
+| --- | --- |
+| Auto (range) | heats below the minimum, cools above the maximum, idles in between |
+| Heat / Cool | only heats to the target / only cools to the target |
+| Off | switches the AC off |
+
+- **Starting:** 0.3 °C below the minimum (above the maximum). 1.5 °C beyond
+  the limit (hard limit) a run starts regardless of forecast and lockout.
+- **Stopping:** in Auto at the middle of the range (so the room has room to
+  drift), in Heat/Cool 0.3 °C past the target; not before the minimum run time
+  of 20 min. The next run starts 20 min later at the earliest.
+- **Lockout:** no cooling within 6 h after heating and the other way round
+  (except at the hard limit).
+- **Waiting for free warmth or cooling:** before heating, the control waits if
+  it stays at least 1 °C above the minimum outside for the whole next hour, or
+  the sun brings at least 250 W/m². Before cooling, if it stays at least 2 °C
+  below the maximum outside. It waits at most 60 min, and not while the room
+  moves 0.3 °C per 30 min or more the wrong way.
+- **Idle:** the AC runs in the idle mode (e.g. fan only, silent). With a
+  presence entity, after 60 min away the AC is switched off instead; heating
+  and cooling runs still happen while away.
+- **Setpoint offset:** the AC gets the stop point plus (heating) or minus
+  (cooling) an offset of 2 °C to make up for its own sensor. With the
+  compressor sensor it's raised by 0.5 °C when the compressor idles for 15 min
+  during a run while the room is still short; it's lowered by 0.5 °C when the
+  room overshoots the stop point by more than 1 °C within 30 min after a run.
+- **Manual changes:** a change on the AC the control didn't send (remote, app,
+  another automation) pauses the control for 2 h. *End pause* or switching the
+  control off and on resumes it right away.
+- The same command is repeated at most every 10 min if the AC doesn't follow.
+- Room sensor unavailable: idle. AC unavailable: nothing is sent.
+
+Every number above is a setting in the second step of *Configure*.
+
+### Entities
+
+For a profile called `Living room`:
+
+| Entity | |
+| --- | --- |
+| `switch.living_room_climate_control` | control on/off (off: nothing is sent to the AC) |
+| `button.living_room_end_pause` | end a pause after a manual change |
+| `sensor.living_room_control_status` | what it does, e.g. `Too cold – waiting for sun or warmth until 14:32`; only changes when the situation changes, live values are attributes |
+| `sensor.living_room_control_reason` | why the current run started; empty while idle |
+| `sensor.living_room_control_state` | `disabled`, `unavailable`, `paused`, `off`, `away`, `idle`, `waiting`, `heating`, `cooling` |
+| `number.living_room_heating_offset`, `number.living_room_cooling_offset` | setpoint offsets (tune themselves, can be set) |
+| diagnostic sensors (disabled by default) | room average, room trend, forecast outside minimum/maximum and radiation for the next waiting window, AC setpoint, waiting until, paused until |
+
 ## Storage
 
-Values are stored per entry in `.storage/heating_profile.<entry_id>` and the
-file is deleted when you remove the entry.
+Values are stored per entry in `.storage/heating_profile.<entry_id>`, the
+state of the climate control in `.storage/heating_profile.<entry_id>.control`.
+Both files are deleted when you remove the entry.
 
 ## Development
 

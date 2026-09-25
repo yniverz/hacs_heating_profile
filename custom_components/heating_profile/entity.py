@@ -24,7 +24,7 @@ class HeatingProfileEntity(Entity):
     ) -> None:
         """Initialize the entity."""
         self.entity_description = description
-        self._data = entry.runtime_data
+        self._data = entry.runtime_data.profile
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
@@ -37,3 +37,23 @@ class HeatingProfileEntity(Entity):
         """Update state whenever any setting changes."""
         await super().async_added_to_hass()
         self.async_on_remove(self._data.async_add_listener(self.async_write_ha_state))
+
+
+class ControlEntity(HeatingProfileEntity):
+    """Entity of the climate control; updates after every evaluation."""
+
+    def __init__(
+        self, entry: HeatingProfileConfigEntry, description: EntityDescription
+    ) -> None:
+        """Initialize the entity."""
+        super().__init__(entry, description)
+        controller = entry.runtime_data.controller
+        assert controller is not None
+        self._controller = controller
+
+    async def async_added_to_hass(self) -> None:
+        """Update whenever the control evaluated."""
+        await Entity.async_added_to_hass(self)
+        self.async_on_remove(
+            self._controller.async_add_listener(self.async_write_ha_state)
+        )
