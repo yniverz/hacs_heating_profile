@@ -31,6 +31,7 @@ from .const import (
     CONF_IDLE_FAN_MODE,
     CONF_IDLE_HVAC_MODE,
     CONF_LOCKOUT,
+    CONF_LOOK_AHEAD,
     CONF_MAX_WAIT,
     CONF_MIN_PAUSE,
     CONF_MIN_RUN,
@@ -69,6 +70,7 @@ NUMBERS: dict[str, tuple[float, float, float, str]] = {
     CONF_MIN_RUN: (0, 120, 1, "min"),
     CONF_MIN_PAUSE: (0, 120, 1, "min"),
     CONF_LOCKOUT: (0, 24, 0.5, "h"),
+    CONF_LOOK_AHEAD: (0, 180, 5, "min"),
     CONF_MAX_WAIT: (0, 240, 5, "min"),
     CONF_FAST_TREND: (0.1, 3.0, 0.1, "°C/30 min"),
     CONF_WARMTH_MARGIN: (-5.0, 10.0, 0.5, "°C"),
@@ -97,6 +99,7 @@ SECTIONS: dict[str, tuple[str, ...]] = {
         CONF_MIN_RUN,
         CONF_MIN_PAUSE,
         CONF_LOCKOUT,
+        CONF_LOOK_AHEAD,
     ),
     "waiting": (
         CONF_MAX_WAIT,

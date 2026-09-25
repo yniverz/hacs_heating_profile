@@ -75,6 +75,7 @@ CONF_STOP_PAST_TARGET = "stop_past_target"
 CONF_MIN_RUN = "min_run"
 CONF_MIN_PAUSE = "min_pause"
 CONF_LOCKOUT = "lockout"
+CONF_LOOK_AHEAD = "look_ahead"
 
 # Waiting for free warmth / cooling
 CONF_MAX_WAIT = "max_wait"
@@ -112,6 +113,7 @@ CONTROL_DEFAULTS: dict[str, float | bool] = {
     CONF_MIN_RUN: 20,  # min
     CONF_MIN_PAUSE: 20,  # min
     CONF_LOCKOUT: 6,  # h between heating and cooling
+    CONF_LOOK_AHEAD: 30,  # min before a day/night switch: use the next range
     CONF_MAX_WAIT: 60,  # min to wait for free warmth/cooling
     CONF_FAST_TREND: 0.3,  # °C per 30 min the wrong way: don't wait
     CONF_WARMTH_MARGIN: 1.0,  # °C above the minimum outside counts as warmth

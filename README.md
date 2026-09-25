@@ -275,6 +275,12 @@ with the profile's range for the current period:
   of 20 min. The next run starts 20 min later at the earliest.
 - **Lockout:** no cooling within 6 h after heating and the other way round
   (except at the hard limit).
+- **Look ahead:** 30 min before a day/night switch (or the end of a manual
+  day/night override) the control already uses the next period's range. It
+  skips heating or cooling the old range no longer needs, pre-heats or
+  pre-cools for the new one, and a running run stops at the next period's
+  stop point. The status shows it, e.g. `In range 17.0–24.0 °C (night from
+  22:00) – fan only`.
 - **Waiting for free warmth or cooling:** before heating, the control waits if
   it stays at least 1 °C above the minimum outside for the whole next hour, or
   the sun brings at least 250 W/m². Before cooling, if it stays at least 2 °C

@@ -58,6 +58,7 @@ from .const import (
     CONF_COMPRESSOR,
     CONF_IDLE_FAN_MODE,
     CONF_IDLE_HVAC_MODE,
+    CONF_LOOK_AHEAD,
     CONF_MAX_WAIT,
     CONF_OFFSET_MAX,
     CONF_OFFSET_STEP,
@@ -606,7 +607,19 @@ class ClimateController:
         if st.pause_until is not None:
             st.pause_until = None
 
-        period_low, period_high = self.profile.target_range(dt_util.utcnow())
+        # Within the look-ahead before a day/night switch, act as if the next
+        # period had already started (saves heating/cooling the old range
+        # needs, pre-heats/-cools for the new one).
+        now_dt = dt_util.utcnow()
+        period = self.profile.period(now_dt)
+        period_low, period_high = self.profile.period_range(period)
+        ahead: str | None = None
+        look = s[CONF_LOOK_AHEAD] * 60
+        if look > 0:
+            switch_at, next_period = self.profile.upcoming(now_dt)
+            if next_period != period and (switch_at - now_dt).total_seconds() <= look:
+                period_low, period_high = self.profile.period_range(next_period)
+                ahead = f"{next_period} from {_hm(switch_at.timestamp())}"
         situation = Situation(
             now=now,
             run=st.run,
@@ -635,7 +648,7 @@ class ClimateController:
                 st.cool_ended = now
                 st.last_cycle = {"kind": "cool", "stop": d.stop_cool, "ended": now}
             if d.run in (RUN_HEATING, RUN_COOLING):
-                st.reason = self._reason(d, room, trend)
+                st.reason = self._reason(d, room, trend, ahead)
                 st.reason_since = now
             else:
                 st.reason, st.reason_since = "", None
@@ -662,7 +675,7 @@ class ClimateController:
             want = self._ac_tuple(idle_mode, None, s[CONF_IDLE_FAN_MODE])
         await self._async_send(want, ac_state)
 
-        self.view = self._build_view(d, room, trend, fc, setpoint, away)
+        self.view = self._build_view(d, room, trend, fc, setpoint, away, ahead)
         self._save()
 
     def _setpoint(self, value: float, attrs: dict[str, Any]) -> float:
@@ -805,7 +818,13 @@ class ClimateController:
 
     # ----- texts -----------------------------------------------------------
 
-    def _reason(self, d: Decision, room: float | None, trend: float) -> str:
+    def _reason(
+        self, d: Decision, room: float | None, trend: float, ahead: str | None
+    ) -> str:
+        text = self._reason_text(d, room, trend)
+        return f"{text} ({ahead})" if ahead else text
+
+    def _reason_text(self, d: Decision, room: float | None, trend: float) -> str:
         s = self.settings
         r = _t(room)
         waited = d.extra.get("waited_before_start", 0.0)
@@ -845,8 +864,10 @@ class ClimateController:
         fc: ForecastWindow | None,
         setpoint: float | None,
         away: bool,
+        ahead: str | None = None,
     ) -> ControlView:
         st, s = self.state, self.settings
+        note = f" ({ahead})" if ahead else ""
         idle_label = s[CONF_IDLE_HVAC_MODE].replace("_", " ")
         idle_text = "AC off" if away else idle_label
         waiting_until: datetime | None = None
@@ -863,7 +884,7 @@ class ClimateController:
                 f"{_hm(d.min_run_until)}"
                 if d.min_run_until is not None
                 else f"Heating to {_t(d.stop_heat)} °C"
-            )
+            ) + note
         elif d.run == RUN_COOLING:
             state = STATE_COOLING
             status = (
@@ -871,7 +892,7 @@ class ClimateController:
                 f"{_hm(d.min_run_until)}"
                 if d.min_run_until is not None
                 else f"Cooling to {_t(d.stop_cool)} °C"
-            )
+            ) + note
         elif d.waiting:
             state = STATE_WAITING
             word = "Too cold" if d.heat_zone else "Too warm"
@@ -888,6 +909,7 @@ class ClimateController:
                 status = f"{word} – waiting for {what} until {_hm(end)}"
             else:
                 status = word
+            status += note
             if away:
                 status += " (away – AC off)"
         elif away:
@@ -902,7 +924,7 @@ class ClimateController:
                 rng = f"≥ {_t(d.low)} °C"
             else:
                 rng = f"≤ {_t(d.high)} °C"
-            status = f"In range {rng} – {idle_label}"
+            status = f"In range {rng}{note} – {idle_label}"
 
         attributes = {
             "run": d.run,
@@ -920,6 +942,7 @@ class ClimateController:
             "warmth_coming": d.warmth_coming,
             "free_cooling": d.free_cooling,
             "away": away,
+            "look_ahead": ahead,
             "offset_heat": st.offset_heat,
             "offset_cool": st.offset_cool,
         }

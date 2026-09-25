@@ -221,8 +221,24 @@ class HeatingProfileData:
 
     def target_range(self, now: datetime) -> tuple[float, float]:
         """Return (minimum, maximum) of the effective period at `now`."""
-        low_key, high_key = RANGE_KEYS[self.period(now)]
+        return self.period_range(self.period(now))
+
+    def period_range(self, period: str) -> tuple[float, float]:
+        """Return (minimum, maximum) of a period."""
+        low_key, high_key = RANGE_KEYS[period]
         return getattr(self, low_key), getattr(self, high_key)
+
+    def upcoming(self, now: datetime) -> tuple[datetime, str]:
+        """When the effective period changes next, and the period after it.
+
+        With a manual override that is its end; the period after it can be
+        the same as the current one (then nothing changes).
+        """
+        if self.override_active(now) and self.override_until is not None:
+            switch = self.override_until
+        else:
+            switch = self.next_switch(now)
+        return switch, self.scheduled_period(switch)
 
     def next_switch(self, now: datetime) -> datetime:
         """Return the next time the schedule switches between day and night."""

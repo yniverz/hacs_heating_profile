@@ -188,7 +188,8 @@
               "stop_past_target": "Stop past the target",
               "min_run": "Minimum run time",
               "min_pause": "Minimum pause",
-              "lockout": "Lockout between heating and cooling"
+              "lockout": "Lockout between heating and cooling",
+              "look_ahead": "Look ahead to the next period"
             },
             "data_description": {
               "start_offset": "A run starts this far below the minimum (heating) or above the maximum (cooling).",
@@ -197,7 +198,8 @@
               "stop_past_target": "Heat or cool mode: a run stops this far past the target.",
               "min_run": "A run lasts at least this long.",
               "min_pause": "No new run starts within this time after the last change.",
-              "lockout": "After heating no cooling starts within this time, and the other way round (except at the hard limit)."
+              "lockout": "After heating no cooling starts within this time, and the other way round (except at the hard limit).",
+              "look_ahead": "This long before a day/night switch the control already uses the next period's range: it skips heating or cooling the old range no longer needs and pre-heats or pre-cools for the new one. 0 turns it off."
             }
           },
           "waiting": {

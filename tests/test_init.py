@@ -646,3 +646,23 @@ async def test_card_is_served(
     response = await client.get("/heating_profile/heating-profile-card.js")
     assert response.status == 200
     assert "heating-profile-card" in await response.text()
+
+
+async def test_upcoming_switch(
+    hass: HomeAssistant, local_time, entry: MockConfigEntry
+) -> None:
+    """Next switch and the period after it, also with an override."""
+    profile = entry.runtime_data.profile
+    now = dt_util.utcnow()  # 12:00, day 06:00-22:00
+    switch, period = profile.upcoming(now)
+    assert dt_util.as_local(switch).hour == 22 and period == "night"
+    assert profile.period_range("night") == (17.0, 24.0)
+    # Forced night until 22:00: after it the schedule says night as well.
+    profile.async_set_period("night", now)
+    switch, period = profile.upcoming(now)
+    assert dt_util.as_local(switch).hour == 22 and period == "night"
+    # Equal start times: always night, no change ahead.
+    await set_time(hass, DAY_START, "06:00")
+    await set_time(hass, NIGHT_START, "06:00")
+    switch, period = profile.upcoming(dt_util.utcnow())
+    assert period == profile.period(dt_util.utcnow()) == "night"

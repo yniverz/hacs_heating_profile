@@ -110,9 +110,13 @@ async def advance(hass: HomeAssistant, freezer, minutes: int) -> None:
 
 
 async def setup_control(
-    hass: HomeAssistant, local_time, freezer, options: dict[str, Any] | None = None
+    hass: HomeAssistant,
+    local_time,
+    freezer,
+    options: dict[str, Any] | None = None,
+    hour: int = 12,
 ) -> tuple[MockConfigEntry, dict[str, list]]:
-    local_time(12)
+    local_time(hour)
     hass.states.async_set(ROOM, "23.0", {"unit_of_measurement": "°C"})
     # Compressor "on" by default, so the offset tuning stays out of the way.
     hass.states.async_set(COMP, "on")
@@ -667,3 +671,97 @@ async def test_corrupt_control_storage(
     assert c.state.run == "idle"
     assert c.state.offset_heat == 2.0 and c.state.offset_cool == 2.0
     assert c.state.last_command is None and c.state.last_cycle is None
+
+
+# ----- look ahead to the next period (default day 06:00-22:00) -----------
+
+
+async def test_look_ahead_skips_evening_heating(
+    hass: HomeAssistant, local_time, freezer
+) -> None:
+    """30 min before night (min 17) no heating for the day minimum (21)."""
+    entry, calls = await setup_control(hass, local_time, freezer, hour=21)
+    await advance(hass, freezer, 19)  # 21:31
+    hass.states.async_set(ROOM, "20.5")
+    await advance(hass, freezer, 10)
+    assert st(hass, STATE) == "idle" and sent(calls) == []
+    assert st(hass, STATUS) == ("In range 17.0–24.0 °C (night from 22:00) – fan only")
+    assert hass.states.get(STATUS).attributes["look_ahead"] == "night from 22:00"
+
+
+async def test_look_ahead_off_heats_for_current_period(
+    hass: HomeAssistant, local_time, freezer
+) -> None:
+    """Look-ahead 0: the current (day) minimum still applies."""
+    entry, calls = await setup_control(
+        hass, local_time, freezer, {**OPTIONS, "look_ahead": 0}, hour=21
+    )
+    await advance(hass, freezer, 19)
+    hass.states.async_set(ROOM, "20.5")
+    await advance(hass, freezer, 10)
+    assert st(hass, STATE) == "heating"
+    assert "night" not in st(hass, REASON)
+
+
+async def test_look_ahead_precools_for_the_night(
+    hass: HomeAssistant, local_time, freezer
+) -> None:
+    """Night maximum 22: from 21:30 it cools to the night's middle."""
+    entry, calls = await setup_control(hass, local_time, freezer, hour=21)
+    entry.runtime_data.profile.async_update(night_temp_high=22.0)
+    await advance(hass, freezer, 18)  # 21:30
+    assert st(hass, STATE) == "cooling"  # 23 >= 22.3
+    assert ("set_temperature", {"temperature": 17.5}) in sent(calls)  # 19.5 - 2
+    assert st(hass, STATUS) == "Cooling to 19.5 °C (night from 22:00)"
+    assert st(hass, REASON).endswith("(night from 22:00)")
+
+
+async def test_look_ahead_preheats_in_the_morning(
+    hass: HomeAssistant, local_time, freezer
+) -> None:
+    """20 °C is fine at night (17-24) but from 05:30 the day (21) counts."""
+    entry, calls = await setup_control(hass, local_time, freezer, hour=5)
+    hass.states.async_set(ROOM, "20.0")
+    await advance(hass, freezer, 12)  # 05:24
+    assert st(hass, STATE) == "idle"
+    await advance(hass, freezer, 6)  # 05:30
+    assert st(hass, STATE) == "heating"
+    assert st(hass, REASON) == (
+        "Too cold (20.0 °C, minimum 21.0 °C), no sun or warmth expected"
+        " (day from 06:00)"
+    )
+
+
+async def test_look_ahead_ends_a_run_at_the_next_middle(
+    hass: HomeAssistant, local_time, freezer
+) -> None:
+    """A day heating run stops at the night's middle once look-ahead starts."""
+    entry, calls = await setup_control(hass, local_time, freezer, hour=21)
+    hass.states.async_set(ROOM, "19.0")
+    await advance(hass, freezer, 7)  # 21:19
+    assert st(hass, STATE) == "heating"
+    set_ac(hass, "heat", 25.0, "auto")
+    hass.states.async_set(ROOM, "21.0")
+    await advance(hass, freezer, 10)  # 21:29: day middle 23 not reached
+    assert st(hass, STATE) == "heating"
+    started = controller(entry).state.last_switch
+    await advance(hass, freezer, 2)  # 21:31: night middle 20.5 reached
+    assert st(hass, STATUS) == (
+        f"Heating – 20.5 °C reached, minimum run until {hm(started + 1200)}"
+        " (night from 22:00)"
+    )
+    left = int((started + 1200 - dt_util.utcnow().timestamp()) // 60)
+    await advance(hass, freezer, left)
+    assert st(hass, STATE) == "idle"
+
+
+async def test_look_ahead_respects_manual_override(
+    hass: HomeAssistant, local_time, freezer
+) -> None:
+    """Night forced by hand until 22:00: the night stays, nothing changes."""
+    entry, calls = await setup_control(hass, local_time, freezer, hour=20)
+    profile = entry.runtime_data.profile
+    profile.async_set_period("night", dt_util.utcnow())
+    await hass.async_block_till_done()
+    await advance(hass, freezer, 80)  # 21:32
+    assert st(hass, STATUS) == "In range 17.0–24.0 °C – fan only"
