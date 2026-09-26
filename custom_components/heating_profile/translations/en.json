@@ -296,13 +296,17 @@
               "cycle_min_run": "Minimum run time",
               "cycle_min_rest": "Minimum rest time",
               "cycle_run_margin": "Setpoint while running",
+              "cycle_rest_heat": "Setpoint while resting (heating)",
+              "cycle_rest_cool": "Setpoint while resting (cooling)",
               "cycle_average": "Average over"
             },
             "data_description": {
               "cycle_stop_margin": "A run heats until the minimum plus this (cools until the maximum minus this). A rest ends at \"Start near the limit\" (targets section). Must be above it.",
               "cycle_min_run": "A run lasts at least this long; only reaching the maximum (cooling: minimum) ends it earlier.",
               "cycle_min_rest": "A rest lasts at least this long; only the hard limit ends it earlier.",
-              "cycle_run_margin": "While running the AC gets the room temperature plus this (cooling: minus this), so its own sensor keeps the compressor on. It never moves back within a run. While resting it gets its lowest (cooling: highest) setpoint.",
+              "cycle_run_margin": "While running the AC gets the room temperature plus this (cooling: minus this), so its own sensor keeps the compressor on. It never moves back within a run.",
+              "cycle_rest_heat": "Low enough that the compressor stays off. Use a value the AC accepts in heat mode (many don't take less than 17 °C and correct it, which would pause the control as a manual change).",
+              "cycle_rest_cool": "High enough that the compressor stays off; a value the AC accepts in cool mode.",
               "cycle_average": "Run and rest are decided on the room temperature averaged over this time."
             }
           },

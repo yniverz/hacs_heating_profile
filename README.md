@@ -316,7 +316,7 @@ no longer lets the AC hold a setpoint (layer 1 stays the same).
 | Phase | AC gets | Ends when |
 | --- | --- | --- |
 | Run | room + 5 °C (cooling: − 5 °C); within a run it only moves further | the room reaches the minimum + 0.8 °C (cooling: maximum − 0.8 °C), after at least 20 min; at once at the maximum |
-| Rest | its lowest setpoint (cooling: highest); the fan follows *compressor off* | the room is back at the minimum + 0.1 °C (cooling: maximum − 0.1 °C), after at least 15 min; at once at the hard limit |
+| Rest | 17 °C (cooling: 30 °C), a setpoint the AC accepts; the fan follows *compressor off* | the room is back at the minimum + 0.1 °C (cooling: maximum − 0.1 °C), after at least 15 min; at once at the hard limit |
 
 The room is averaged over 5 min for this. Learning is paused while the switch
 is on; leaving heat/cool mode (e.g. after 60 idle minutes in a long rest)

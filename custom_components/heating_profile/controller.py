@@ -64,6 +64,8 @@ from .const import (
     CONF_CYCLE_AVERAGE,
     CONF_CYCLE_MIN_REST,
     CONF_CYCLE_MIN_RUN,
+    CONF_CYCLE_REST_COOL,
+    CONF_CYCLE_REST_HEAT,
     CONF_CYCLE_RUN_MARGIN,
     CONF_DRIFT_TIME,
     CONF_EXIT_WINDOW,
@@ -902,8 +904,8 @@ class ClimateController:
     ) -> float:
         """Setpoint with the anti short cycle: run or rest, decided on the
         room sensor. A run gets the room +/- the run margin, so the AC keeps
-        its compressor on; a rest the AC's lowest (cooling: highest) setpoint,
-        so it stays off."""
+        its compressor on; a rest a low (cooling: high) setpoint,
+        so it stays off (a setpoint of its own that it surely accepts)."""
         st, s = self.state, self.settings
         short = self.history.mean(now, s[CONF_CYCLE_AVERAGE] * 60)
         value = short if short is not None else room
@@ -922,7 +924,8 @@ class ClimateController:
             _LOGGER.debug("Anti short cycle: %s -> %s", st.phase, phase)
             st.phase, st.phase_since, st.run_setpoint = phase, now, None
         if phase == PHASE_REST:
-            return self._setpoint(-100.0 if heating else 100.0, attrs)
+            rest = s[CONF_CYCLE_REST_HEAT if heating else CONF_CYCLE_REST_COOL]
+            return self._setpoint(rest, attrs)
         margin = s[CONF_CYCLE_RUN_MARGIN]
         setpoint = self._setpoint(value + margin if heating else value - margin, attrs)
         # Only toward more heating/cooling within a run: a lower setpoint

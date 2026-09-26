@@ -1042,7 +1042,7 @@ async def test_fan_speed_sensor_waits_for_the_fan_to_stop(
 
 
 async def test_anti_short_cycle(hass: HomeAssistant, freezer, control) -> None:
-    """Long runs (room + margin) and rests (lowest setpoint), minimum times."""
+    """Long runs (room + margin) and rests (17 °C), minimum times."""
     entry, calls = control
     c = controller(entry)
     cycle_switch = "switch.living_room_anti_short_cycle"
@@ -1086,9 +1086,9 @@ async def test_anti_short_cycle(hass: HomeAssistant, freezer, control) -> None:
     assert c.state.phase == "rest"
     assert sent(calls) == [
         ("set_temperature", {"temperature": 27.0}),  # followed the room
-        ("set_temperature", {"temperature": 16.0}),  # rest: the AC's lowest
+        ("set_temperature", {"temperature": 17.0}),  # rest
     ]
-    set_ac(hass, "heat", 16.0, "auto")
+    set_ac(hass, "heat", 17.0, "auto")
     rest_start = c.state.phase_since
     assert st(hass, STATUS) == (
         f"Heating – resting, runs again at 21.1 °C (not before {hm(rest_start + 900)})"
@@ -1096,7 +1096,7 @@ async def test_anti_short_cycle(hass: HomeAssistant, freezer, control) -> None:
     set_power(hass, 5)  # the compressor stops: standby fan
     await hass.async_block_till_done()
     assert sent(calls) == [("set_fan_mode", {"fan_mode": "silent"})]
-    set_ac(hass, "heat", 16.0, "silent")
+    set_ac(hass, "heat", 17.0, "silent")
     # Back at the start point, but the rest lasts at least 15 min.
     hass.states.async_set(ROOM, "21.0")
     await advance(hass, freezer, 14)
