@@ -323,7 +323,7 @@ For a profile called `Living room`:
 
 ## Upgrading
 
-### From 0.7.x
+### From 0.7.2
 
 New setting *Fan while heating/cooling, compressor off* (default silent):
 in heat and cool mode the fan now switches to it while the compressor is
