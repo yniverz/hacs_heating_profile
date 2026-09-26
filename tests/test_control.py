@@ -543,6 +543,29 @@ async def test_switch_off_and_on(hass: HomeAssistant, freezer, control) -> None:
     assert controller(entry).state.pause_until is None
 
 
+async def test_measurements_continue_while_control_off(
+    hass: HomeAssistant, freezer, control
+) -> None:
+    """Switched off: nothing is sent, but room average/trend keep updating."""
+    entry, calls = control
+    reg = er.async_get(hass)
+    avg = "sensor.living_room_room_average"
+    reg.async_update_entity(avg, disabled_by=None)
+    await advance(hass, freezer, 1)  # Home Assistant reloads the entry itself
+    await hass.services.async_call(
+        "switch", "turn_off", {ATTR_ENTITY_ID: SWITCH}, blocking=True
+    )
+    await hass.async_block_till_done()
+    await advance(hass, freezer, 1)
+    hass.states.async_set(ROOM, "22.0")
+    await advance(hass, freezer, 10)
+    assert st(hass, STATE) == "disabled"
+    assert st(hass, avg) == "22.0"
+    assert hass.states.get(STATUS).attributes["room"] == 22.0
+    assert float(hass.states.get(STATUS).attributes["trend_per_30min"]) < 0
+    assert sent(calls) == []
+
+
 async def test_profile_off_switches_ac_off(
     hass: HomeAssistant, freezer, control
 ) -> None:

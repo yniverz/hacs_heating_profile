@@ -456,11 +456,7 @@ class ClimateController:
         if enabled:
             self.state.pause_until = None
         self._save()
-        if enabled:
-            await self.async_evaluate()
-        else:
-            self._update_view_disabled()
-            self._notify()
+        await self.async_evaluate()
 
     async def async_end_pause(self) -> None:
         """End a pause after a manual change right away."""
@@ -556,9 +552,6 @@ class ClimateController:
                     break
         self._notify()
 
-    def _update_view_disabled(self) -> None:
-        self.view = ControlView(state=STATE_DISABLED, status="Control off")
-
     def _effective_range(self, now_dt: datetime) -> tuple[float, float, str | None]:
         """Range of the current period, or of the next one within look-ahead."""
         period = self.profile.period(now_dt)
@@ -576,10 +569,6 @@ class ClimateController:
         now_dt = dt_util.utcnow()
         now = now_dt.timestamp()
 
-        if not st.enabled:
-            self._update_view_disabled()
-            return
-
         ac_state = self.hass.states.get(self.ac)
         room_state = self.hass.states.get(self.room_sensor)
         self._record_room(room_state)
@@ -594,6 +583,21 @@ class ClimateController:
         if self.forecast is not None:
             wait_fc = self.forecast.window(now, s[CONF_MAX_WAIT])
             exit_fc = self.forecast.window(now, s[CONF_EXIT_WINDOW])
+
+        if not st.enabled:
+            # Nothing is sent, but the measurements keep updating.
+            self.view = ControlView(
+                state=STATE_DISABLED,
+                status="Control off",
+                attributes={
+                    "room": None if room is None else round(room, 2),
+                    "trend_per_30min": round(trend, 2),
+                },
+                room=room,
+                trend=trend,
+                forecast=wait_fc,
+            )
+            return
 
         if ac_state is None or ac_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
             self.view = ControlView(

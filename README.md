@@ -310,7 +310,7 @@ For a profile called `Living room`:
 
 | Entity | |
 | --- | --- |
-| `switch.living_room_climate_control` | control on/off (off: nothing is sent to the AC) |
+| `switch.living_room_climate_control` | control on/off (off: nothing is sent to the AC; room average, trend and forecast keep updating) |
 | `button.living_room_end_pause` | end a pause after a manual change |
 | `sensor.living_room_control_status` | what it does, e.g. `Heating mode – holding 21.3 °C`; only changes when the situation changes, live values are attributes |
 | `sensor.living_room_control_reason` | why the current heat/cool mode started; empty in neutral |
