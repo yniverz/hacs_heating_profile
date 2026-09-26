@@ -60,6 +60,7 @@ from .const import (
     CONF_AVERAGE_WINDOW,
     CONF_COMMAND_GRACE,
     CONF_COMPRESSOR,
+    CONF_COOL_MARGIN,
     CONF_DRIFT_TIME,
     CONF_EXIT_WINDOW,
     CONF_HARD_MARGIN,
@@ -76,6 +77,7 @@ from .const import (
     CONF_ROOM_SENSOR,
     CONF_TREND_WINDOW,
     CONF_USE_FORECAST,
+    CONF_WARMTH_MARGIN,
     CONTROL_DEFAULTS,
     CONTROL_INTERVAL_SECONDS,
     CONTROL_STORAGE_VERSION,
@@ -692,7 +694,7 @@ class ClimateController:
         await self._async_send(want, ac_state)
 
         self.view = self._build_view(
-            d, room, trend, wait_fc, target, setpoint, ahead, active, power
+            d, room, trend, wait_fc, target, setpoint, ahead, active, power, (low, high)
         )
         self._save()
 
@@ -891,8 +893,11 @@ class ClimateController:
         ahead: str | None,
         active: bool | None,
         power: float | None,
+        period: tuple[float, float],
     ) -> ControlView:
         st, s = self.state, self.settings
+        # Outside warmth is measured from the maximum, cool air from the minimum.
+        period_low, period_high = period
         idle_label = s[CONF_IDLE_HVAC_MODE].replace("_", " ")
         note = f" ({ahead})" if ahead else ""
         waiting_until: datetime | None = None
@@ -908,6 +913,23 @@ class ClimateController:
         elif d.mode == MODE_COOL:
             state = STATE_COOLING
             status = f"Cooling mode – holding {_t(target)} °C{note}"
+        elif d.held:
+            state = STATE_WAITING
+            hard = s[CONF_HARD_MARGIN]
+            if d.warm_hold and d.low is not None:
+                warm = period_high + s[CONF_WARMTH_MARGIN]
+                status = (
+                    f"Near minimum – warm outside (above {_t(warm)} °C): "
+                    f"heating only below {_t(d.low - hard)} °C"
+                )
+            else:
+                assert d.high is not None
+                cool = period_low - s[CONF_COOL_MARGIN]
+                status = (
+                    f"Near maximum – cool outside (below {_t(cool)} °C): "
+                    f"cooling only above {_t(d.high + hard)} °C"
+                )
+            status += note
         elif d.waiting:
             state = STATE_WAITING
             word = "Near minimum" if d.heat_zone else "Near maximum"

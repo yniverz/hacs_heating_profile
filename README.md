@@ -271,10 +271,16 @@ mode (e.g. fan only, silent).
 | Off | the AC is switched off |
 
 - **Neutral → heat** when the room (10-min average) reaches the minimum +
-  0.1 °C, unless free warmth is coming: outside above the range's maximum +
-  1 °C for the whole next hour, or sun ≥ 250 W/m². It waits at most 60 min,
-  and not while the room falls 0.3 °C per 30 min or faster. Cool mode mirrored
-  (maximum − 0.1 °C; outside below the minimum − 1 °C).
+  0.1 °C. Two exceptions:
+  - **Warm outside:** if it stays above the range's maximum + 1 °C for the
+    whole next hour, heat mode only starts at the hard limit (minimum −
+    1.5 °C), however long that takes — you'd rather have it cooler when it's
+    that warm outside.
+  - **Sun coming** (≥ 250 W/m² in the next hour): it waits at most 60 min,
+    and not while the room falls 0.3 °C per 30 min or faster.
+
+  Cool mode mirrored (maximum − 0.1 °C; cool outside = below the minimum −
+  1 °C, then cooling only above maximum + 1.5 °C).
 - **Heat → neutral** when the AC has idled for 60 min (power sensor or
   compressor), the room is at the target and the mode has lasted 2 h.
 - **Early switch to neutral:** if it stays really warm outside (above the

@@ -136,34 +136,54 @@ def test_targets_and_start_points() -> None:
     assert decide(sit(room=None, mode="heat"), S).mode == "neutral"
 
 
-def test_waiting_before_starting() -> None:
-    """Wait for free warmth, at most max_wait, not when falling fast."""
-    d = decide(sit(room=21.0, wait_forecast=WARM), S)
+SUN = ForecastWindow(min_temp=10.0, max_temp=12.0, radiation=300.0)
+
+
+def test_waiting_for_sun_is_time_limited() -> None:
+    """Sun coming: wait, at most max_wait, not when falling fast."""
+    d = decide(sit(room=21.0, wait_forecast=SUN), S)
     assert d.mode == "neutral" and d.waiting and d.warmth_coming
-    assert d.wait_since == NOW
-    d = decide(sit(room=21.0, wait_forecast=WARM, trend=-0.3), S)
+    assert not d.warm_hold and d.wait_since == NOW
+    d = decide(sit(room=21.0, wait_forecast=SUN, trend=-0.3), S)
     assert d.mode == "heat" and d.reason == "fast"
-    d = decide(sit(room=21.0, wait_forecast=WARM, wait_since=NOW - 60 * M), S)
+    d = decide(sit(room=21.0, wait_forecast=SUN, wait_since=NOW - 60 * M), S)
     assert d.mode == "heat" and d.reason == "waited"
-    sun = ForecastWindow(min_temp=10.0, max_temp=12.0, radiation=300.0)
-    assert decide(sit(room=21.0, wait_forecast=sun), S).warmth_coming
-    # The opposite limit counts: exactly max + 1 is not enough, the minimum
-    # of the range is irrelevant.
+    # Back out of the zone: waiting ends.
+    d = decide(sit(room=22.0, wait_forecast=SUN, wait_since=NOW - 600), S)
+    assert not d.waiting and d.wait_since is None
+
+
+def test_warm_outside_holds_until_the_hard_limit() -> None:
+    """Warmer than max + 1 outside the whole window: heat only at the hard limit."""
+    for room in (21.1, 21.0, 20.0, 19.6):
+        d = decide(sit(room=room, wait_forecast=WARM), S)
+        assert d.mode == "neutral" and d.held and d.warm_hold, room
+        assert not d.waiting and d.wait_since is None
+    # No time limit, no trend rule.
+    d = decide(sit(room=20.0, wait_forecast=WARM, wait_since=NOW - 5 * H), S)
+    assert d.mode == "neutral"
+    d = decide(sit(room=20.0, wait_forecast=WARM, trend=-1.0), S)
+    assert d.mode == "neutral"
+    d = decide(sit(room=19.5, wait_forecast=WARM), S)
+    assert d.mode == "heat" and d.reason == "hard"
+    # In range: nothing held.
+    d = decide(sit(room=22.0, wait_forecast=WARM), S)
+    assert d.warm_hold and not d.held
+    # Exactly max + 1 or only the range's minimum + 1: normal start.
     edge = ForecastWindow(min_temp=26.0, max_temp=27.0, radiation=0.0)
     assert decide(sit(room=21.0, wait_forecast=edge), S).mode == "heat"
-    mild = ForecastWindow(min_temp=23.0, max_temp=24.0, radiation=0.0)  # > 21 + 1
+    mild = ForecastWindow(min_temp=23.0, max_temp=24.0, radiation=0.0)
     assert decide(sit(room=21.0, wait_forecast=mild), S).mode == "heat"
+    # Heat-only profile: measured against the period's maximum as well.
+    d = decide(sit(room=21.0, wait_forecast=WARM, profile_mode="heat"), S)
+    assert d.mode == "neutral" and d.held
+    # Cooling mirrored: below min - 1 outside -> cool only at max + 1.5.
+    d = decide(sit(room=26.0, wait_forecast=COOLAIR), S)
+    assert d.mode == "neutral" and d.held and d.cool_hold
+    d = decide(sit(room=26.5, wait_forecast=COOLAIR), S)
+    assert d.mode == "cool" and d.reason == "hard"
     edge = ForecastWindow(min_temp=10.0, max_temp=20.0, radiation=0.0)
     assert decide(sit(room=24.9, wait_forecast=edge), S).mode == "cool"
-    # Heat-only profile: still measured against the period's maximum.
-    assert decide(
-        sit(room=21.0, wait_forecast=WARM, profile_mode="heat"), S
-    ).warmth_coming
-    d = decide(sit(room=24.9, wait_forecast=COOLAIR), S)
-    assert d.mode == "neutral" and d.free_cooling
-    # Back out of the zone: waiting ends.
-    d = decide(sit(room=22.0, wait_forecast=WARM, wait_since=NOW - 600), S)
-    assert not d.waiting and d.wait_since is None
 
 
 def test_switch_gap_lockout_and_hard_limit() -> None:
@@ -226,7 +246,7 @@ def test_early_exit_and_drift() -> None:
         mode_since=NOW - 40 * M,
         drift_until=NOW + 20 * M,
         drift_side="heat",
-        wait_forecast=WARM,
+        wait_forecast=SUN,
     )
     d = decide(sit(**drift, room=20.8), S)
     assert (

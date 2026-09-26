@@ -366,8 +366,8 @@ async def test_early_exit_and_drift(hass: HomeAssistant, freezer, control) -> No
     hass.states.async_set(ROOM, "20.8")
     await advance(hass, freezer, 45)
     assert st(hass, STATE) == "neutral"
-    # Drift time over -> heat mode again right away (no extra waiting).
-    stub.wait = ForecastWindow(min_temp=26.5, max_temp=28.0, radiation=0.0)
+    # Drift time over -> heat mode again right away (no extra waiting for sun).
+    stub.wait = ForecastWindow(min_temp=10.0, max_temp=12.0, radiation=300.0)
     await advance(hass, freezer, 20)
     assert st(hass, STATE) == "heating"
     assert st(hass, REASON).endswith("sun or warmth didn't come within 60 min")
@@ -394,11 +394,11 @@ async def test_early_exit_room_falls_below_drift(
     assert st(hass, STATE) == "heating"
 
 
-async def test_waiting_for_warmth(hass: HomeAssistant, freezer, control) -> None:
-    """Warm enough outside the whole next hour -> wait, at most 60 min."""
+async def test_waiting_for_sun(hass: HomeAssistant, freezer, control) -> None:
+    """Sun coming in the next hour -> wait, at most 60 min."""
     entry, calls = control
     stub = stub_forecast(entry)
-    stub.wait = ForecastWindow(min_temp=26.5, max_temp=28.0, radiation=0.0)
+    stub.wait = ForecastWindow(min_temp=10.0, max_temp=12.0, radiation=300.0)
     hass.states.async_set(ROOM, "21.3")
     await advance(hass, freezer, 32)
     hass.states.async_set(ROOM, "21.1")  # slow: -0.2 in 30 min
@@ -417,6 +417,42 @@ async def test_waiting_for_warmth(hass: HomeAssistant, freezer, control) -> None
     await advance(hass, freezer, 1)
     assert st(hass, STATE) == "heating"
     assert st(hass, REASON).endswith("waited 60 min for sun or warmth")
+
+
+async def test_warm_outside_heats_only_at_the_hard_limit(
+    hass: HomeAssistant, freezer, control
+) -> None:
+    """Warmer than max + 1 outside: no heat mode until min - 1.5."""
+    entry, calls = control
+    stub = stub_forecast(entry)
+    stub.wait = ForecastWindow(min_temp=26.5, max_temp=28.0, radiation=0.0)
+    hass.states.async_set(ROOM, "20.0")
+    await advance(hass, freezer, 12)
+    assert st(hass, STATE) == "waiting"
+    assert st(hass, STATUS) == (
+        "Near minimum – warm outside (above 26.0 °C): heating only below 19.5 °C"
+    )
+    since = hass.states.get(STATUS).last_changed
+    await advance(hass, freezer, 120)  # no time limit
+    assert st(hass, STATE) == "waiting" and sent(calls) == []
+    assert hass.states.get(STATUS).last_changed == since
+    hass.states.async_set(ROOM, "19.4")
+    await advance(hass, freezer, 10)
+    assert st(hass, STATE) == "heating"
+    assert st(hass, REASON).startswith("Hard limit: room 19.")
+
+
+async def test_warm_outside_ends(hass: HomeAssistant, freezer, control) -> None:
+    """When the warm forecast goes away, the normal start point applies."""
+    entry, calls = control
+    stub = stub_forecast(entry)
+    stub.wait = ForecastWindow(min_temp=26.5, max_temp=28.0, radiation=0.0)
+    hass.states.async_set(ROOM, "20.5")
+    await advance(hass, freezer, 30)
+    assert st(hass, STATE) == "waiting" and sent(calls) == []
+    stub.wait = None
+    await advance(hass, freezer, 1)
+    assert st(hass, STATE) == "heating"
 
 
 async def test_cool_mode(hass: HomeAssistant, freezer, control) -> None:
@@ -797,7 +833,8 @@ async def test_forecast_used_after_setup(
     await advance(hass, freezer, 32)
     hass.states.async_set(ROOM, "21.1")
     await advance(hass, freezer, 10)
-    assert st(hass, STATE) == "waiting"  # 27 °C outside > 25 + 1
+    assert st(hass, STATE) == "waiting"  # 27 °C outside > 25 + 1: held
+    assert "warm outside (above 26.0 °C)" in st(hass, STATUS)
 
 
 async def test_remove_entry_deletes_control_storage(

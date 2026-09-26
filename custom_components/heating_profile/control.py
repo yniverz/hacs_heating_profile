@@ -237,6 +237,11 @@ class Decision:
     waited: float = 0.0  # minutes
     gap_until: float | None = None  # waiting for the switch gap
     lockout_until: float | None = None
+    # Warm (cool) enough outside for the whole waiting window: no heat (cool)
+    # mode until the hard limit, however long it takes.
+    warm_hold: bool = False
+    cool_hold: bool = False
+    held: bool = False  # below/above the normal start point, held back
 
 
 def limits(mode: str, low: float, high: float) -> tuple[float | None, float | None]:
@@ -370,6 +375,23 @@ def decide(s: Situation, settings: dict) -> Decision:
         d.threshold_cool = high + drift_margin if drift_cool else high - start
     d.heat_zone = d.threshold_heat is not None and room <= d.threshold_heat
     d.cool_zone = d.threshold_cool is not None and room >= d.threshold_cool
+    fc = s.wait_forecast
+    d.warm_hold = bool(
+        low is not None
+        and fc is not None
+        and fc.min_temp is not None
+        and fc.min_temp > s.period_high + settings[CONF_WARMTH_MARGIN]
+    )
+    d.cool_hold = bool(
+        high is not None
+        and fc is not None
+        and fc.max_temp is not None
+        and fc.max_temp < s.period_low - settings[CONF_COOL_MARGIN]
+    )
+    if d.warm_hold and d.heat_zone:
+        d.heat_zone, d.held = False, True  # only the hard limit heats now
+    if d.cool_hold and d.cool_zone:
+        d.cool_zone, d.held = False, True
 
     waited = (s.now - s.wait_since) / 60 if s.wait_since is not None else 0.0
     fast = settings[CONF_FAST_TREND]

@@ -210,21 +210,21 @@
             }
           },
           "waiting": {
-            "name": "Waiting for free warmth or cooling",
+            "name": "Free warmth or cooling",
             "description": "Before heat/cool mode starts. Uses the forecast for the next minutes up to the maximum waiting time.",
             "data": {
-              "max_wait": "Maximum waiting time",
+              "max_wait": "Maximum waiting time for sun",
               "fast_trend": "Don't wait when changing this fast",
               "warmth_margin": "Warmth: outside above the maximum by",
               "cool_margin": "Cool air: outside below the minimum by",
               "sun_threshold": "Sun: radiation from"
             },
             "data_description": {
-              "max_wait": "Longest time to wait instead of starting. Also the length of the forecast window.",
-              "fast_trend": "No waiting if the room moves this much per 30 min the wrong way.",
-              "warmth_margin": "Wait instead of heating if the lowest outside temperature of the window is above the range's maximum plus this.",
-              "cool_margin": "Wait instead of cooling if the highest outside temperature of the window is below the range's minimum minus this.",
-              "sun_threshold": "Wait instead of heating if the mean global radiation is at least this high."
+              "max_wait": "Longest time to wait for sun instead of heating. Also the length of the forecast window.",
+              "fast_trend": "No waiting for sun if the room moves this much per 30 min the wrong way.",
+              "warmth_margin": "If the lowest outside temperature of the window is above the range's maximum plus this, heat mode only starts at the hard limit, however long it takes.",
+              "cool_margin": "If the highest outside temperature of the window is below the range's minimum minus this, cool mode only starts at the hard limit, however long it takes.",
+              "sun_threshold": "Wait instead of heating (at most the maximum waiting time) if the mean global radiation is at least this high."
             }
           },
           "early_exit": {
