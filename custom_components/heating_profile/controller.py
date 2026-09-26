@@ -1,4 +1,9 @@
-"""Climate control: drives an AC from a room sensor and the heating profile."""
+"""Climate control: picks heat/cool/neutral and sets the AC's setpoint.
+
+Layer 1 (control.decide) picks the mode and changes it rarely. Layer 2 sets
+the AC's setpoint to the target plus a learned offset and lets the AC
+modulate by itself.
+"""
 
 from __future__ import annotations
 
@@ -26,7 +31,6 @@ from homeassistant.components.climate import (
 from homeassistant.const import (
     ATTR_ENTITY_ID,
     ATTR_TEMPERATURE,
-    STATE_HOME,
     STATE_ON,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
@@ -51,23 +55,24 @@ from homeassistant.util import dt as dt_util
 from .const import (
     CONF_AC,
     CONF_ACTIVE_FAN_MODE,
+    CONF_ACTIVE_POWER,
     CONF_AUTO_TUNE,
     CONF_AVERAGE_WINDOW,
-    CONF_AWAY_AFTER,
     CONF_COMMAND_GRACE,
     CONF_COMPRESSOR,
+    CONF_DRIFT_TIME,
+    CONF_EXIT_WINDOW,
+    CONF_HARD_MARGIN,
+    CONF_HIGH_POWER,
     CONF_IDLE_FAN_MODE,
     CONF_IDLE_HVAC_MODE,
+    CONF_LEARN_AVERAGE,
+    CONF_LEARN_INTERVAL,
+    CONF_LEARN_SETTLE,
     CONF_LOOK_AHEAD,
     CONF_MAX_WAIT,
-    CONF_OFFSET_MAX,
-    CONF_OFFSET_STEP,
-    CONF_OVERSHOOT,
-    CONF_OVERSHOOT_WINDOW,
     CONF_PAUSE,
-    CONF_PRESENCE,
-    CONF_RAISE_IDLE,
-    CONF_RAISE_MARGIN,
+    CONF_POWER_SENSOR,
     CONF_ROOM_SENSOR,
     CONF_TREND_WINDOW,
     CONF_USE_FORECAST,
@@ -83,16 +88,16 @@ from .const import (
     FORECAST_MAX_AGE_HOURS,
     FORECAST_URL,
     HVAC_MODE_OFF,
+    MODE_COOL,
+    MODE_HEAT,
+    MODE_NEUTRAL,
+    MODES,
     RESEND_INTERVAL_SECONDS,
-    RUN_COOLING,
-    RUN_HEATING,
-    RUN_IDLE,
     SAVE_DELAY,
-    STATE_AWAY,
     STATE_COOLING,
     STATE_DISABLED,
     STATE_HEATING,
-    STATE_IDLE,
+    STATE_NEUTRAL,
     STATE_OFF,
     STATE_PAUSED,
     STATE_UNAVAILABLE as CONTROL_UNAVAILABLE,
@@ -106,6 +111,7 @@ from .control import (
     Situation,
     decide,
     forecast_window,
+    learn_step,
     round_setpoint,
 )
 from .profile import HeatingProfileData
@@ -153,22 +159,24 @@ class ControlState:
     """Persisted state of the control."""
 
     enabled: bool = True
-    run: str = RUN_IDLE
-    last_switch: float | None = None
+    mode: str = MODE_NEUTRAL
+    mode_since: float | None = None
     heat_ended: float | None = None
     cool_ended: float | None = None
     pause_until: float | None = None
     wait_since: float | None = None
+    drift_until: float | None = None
+    drift_side: str | None = None  # "heat" / "cool": which limit may drift
+    idle_since: float | None = None
     last_command: dict[str, Any] | None = None
     last_command_at: float | None = None
     offset_heat: float = DEFAULT_OFFSET
     offset_cool: float = DEFAULT_OFFSET
-    offset_heat_changed: float | None = None
-    offset_cool_changed: float | None = None
-    last_cycle: dict[str, Any] | None = None  # {"kind", "stop", "ended"}
+    learned_at: float | None = None
+    last_target: float | None = None
+    target_changed_at: float | None = None
     reason: str = ""
     reason_since: float | None = None
-    last_present: float | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ControlState:
@@ -182,21 +190,29 @@ class ControlState:
                 setattr(state, key, float(value))
             elif default is None and isinstance(value, (int, float, str, dict)):
                 setattr(state, key, value)
-        if state.run not in (RUN_IDLE, RUN_HEATING, RUN_COOLING):
-            state.run = RUN_IDLE
+        if state.mode not in MODES:
+            state.mode = MODE_NEUTRAL
+        if state.drift_side not in (None, "heat", "cool"):
+            state.drift_side = None
         cmd = state.last_command
         if not (isinstance(cmd, dict) and {"mode", "temp", "fan"} <= cmd.keys()):
             state.last_command = None
-        cycle = state.last_cycle
-        if not (
-            isinstance(cycle, dict)
-            and cycle.get("kind") in ("heat", "cool")
-            and isinstance(cycle.get("ended"), (int, float))
+        for key in (
+            "mode_since",
+            "heat_ended",
+            "cool_ended",
+            "pause_until",
+            "wait_since",
+            "drift_until",
+            "idle_since",
+            "last_command_at",
+            "learned_at",
+            "last_target",
+            "target_changed_at",
+            "reason_since",
         ):
-            state.last_cycle = None
-        for key in ("offset_heat", "offset_cool"):
-            if getattr(state, key) < 0:
-                setattr(state, key, DEFAULT_OFFSET)
+            if not isinstance(getattr(state, key), (int, float, type(None))):
+                setattr(state, key, None)
         return state
 
 
@@ -280,7 +296,7 @@ class ForecastSource:
 
 
 class ClimateController:
-    """Decides every minute whether the AC heats, cools or idles."""
+    """Decides every minute: mode (layer 1) and AC setpoint (layer 2)."""
 
     def __init__(
         self,
@@ -295,8 +311,8 @@ class ClimateController:
         self.settings = control_settings(options)
         self.room_sensor: str = options[CONF_ROOM_SENSOR]
         self.ac: str = options[CONF_AC]
+        self.power_sensor: str | None = options.get(CONF_POWER_SENSOR) or None
         self.compressor: str | None = options.get(CONF_COMPRESSOR) or None
-        self.presence: str | None = options.get(CONF_PRESENCE) or None
         self._store: Store[dict[str, Any]] = Store(
             hass, CONTROL_STORAGE_VERSION, control_storage_key(entry_id)
         )
@@ -336,12 +352,6 @@ class ClimateController:
             ),
             self.profile.async_add_listener(self._schedule_evaluate),
         ]
-        if self.presence:
-            self._unsubs.append(
-                async_track_state_change_event(
-                    hass, [self.presence], self._async_trigger_evaluate
-                )
-            )
         if self.forecast is not None:
             self._unsubs.append(
                 async_track_time_interval(
@@ -352,7 +362,7 @@ class ClimateController:
                 )
             )
             # The first evaluation waits for the forecast, so a restart doesn't
-            # start a run that the forecast would have postponed.
+            # start a mode that the forecast would have postponed.
             hass.async_create_task(self._async_first_forecast(), f"{DOMAIN} forecast")
         else:
             self._schedule_evaluate()
@@ -369,10 +379,6 @@ class ClimateController:
             unsub()
         self._unsubs.clear()
         await self._store.async_save(asdict(self.state))
-
-    async def async_remove_storage(self) -> None:
-        """Delete the stored state."""
-        await self._store.async_remove()
 
     def _save(self) -> None:
         self._store.async_delay_save(lambda: asdict(self.state), SAVE_DELAY)
@@ -421,23 +427,26 @@ class ClimateController:
             await self.forecast.async_refresh()
 
     @callback
-    def _async_trigger_evaluate(self, _event: Event[EventStateChangedData]) -> None:
-        self._schedule_evaluate()
-
-    @callback
     def _schedule_evaluate(self) -> None:
         if self._stopped:
             return
         self.hass.async_create_task(self.async_evaluate(), eager_start=True)
 
-    def _present(self) -> bool:
-        """Presence entity says present (unavailable counts as present)."""
-        if not self.presence:
-            return True
-        state = self.hass.states.get(self.presence)
-        if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
-            return True
-        return state.state in (STATE_ON, STATE_HOME)
+    def _activity(self) -> tuple[bool | None, bool | None, float | None]:
+        """(working, working hard, power) of the AC; None if unknown."""
+        if self.power_sensor:
+            power = self._number(self.hass.states.get(self.power_sensor))
+            if power is not None:
+                s = self.settings
+                return power >= s[CONF_ACTIVE_POWER], power >= s[CONF_HIGH_POWER], power
+        if self.compressor:
+            comp = self.hass.states.get(self.compressor)
+            if comp is not None and comp.state not in (
+                STATE_UNAVAILABLE,
+                STATE_UNKNOWN,
+            ):
+                return comp.state == STATE_ON, None, None
+        return None, None, None
 
     # ----- user actions ----------------------------------------------------
 
@@ -461,11 +470,11 @@ class ClimateController:
 
     async def async_set_offset(self, kind: str, value: float) -> None:
         """Set the heating or cooling offset by hand."""
-        now = dt_util.utcnow().timestamp()
         if kind == "heat":
-            self.state.offset_heat, self.state.offset_heat_changed = value, now
+            self.state.offset_heat = value
         else:
-            self.state.offset_cool, self.state.offset_cool_changed = value, now
+            self.state.offset_cool = value
+        self.state.learned_at = dt_util.utcnow().timestamp()
         self._save()
         await self.async_evaluate()
 
@@ -510,9 +519,11 @@ class ClimateController:
             new.attributes.get(ATTR_FAN_MODE),
         )
         # Compare only what the control actually set.
-        if all(last.get(k) is None or last.get(k) == current[k] for k in current) and (
-            last["mode"] == current["mode"]
+        if last["mode"] == current["mode"] and all(
+            last.get(k) is None or last.get(k) == current[k] for k in current
         ):
+            return
+        if self.settings[CONF_PAUSE] <= 0:
             return
         self.state.pause_until = now + self.settings[CONF_PAUSE] * 60
         _LOGGER.info(
@@ -528,7 +539,7 @@ class ClimateController:
     # ----- evaluation ------------------------------------------------------
 
     async def async_evaluate(self) -> None:
-        """Evaluate now (skipped if an evaluation is already running)."""
+        """Evaluate now (queued once if an evaluation is already running)."""
         if self._stopped:
             return
         if self._lock.locked():
@@ -548,39 +559,41 @@ class ClimateController:
     def _update_view_disabled(self) -> None:
         self.view = ControlView(state=STATE_DISABLED, status="Control off")
 
+    def _effective_range(self, now_dt: datetime) -> tuple[float, float, str | None]:
+        """Range of the current period, or of the next one within look-ahead."""
+        period = self.profile.period(now_dt)
+        low, high = self.profile.period_range(period)
+        look = self.settings[CONF_LOOK_AHEAD] * 60
+        if look > 0:
+            switch_at, next_period = self.profile.upcoming(now_dt)
+            if next_period != period and (switch_at - now_dt).total_seconds() <= look:
+                low, high = self.profile.period_range(next_period)
+                return low, high, f"{next_period} from {_hm(switch_at.timestamp())}"
+        return low, high, None
+
     async def _async_evaluate(self) -> None:
-        st = self.state
-        s = self.settings
-        now = dt_util.utcnow().timestamp()
+        st, s = self.state, self.settings
+        now_dt = dt_util.utcnow()
+        now = now_dt.timestamp()
 
         if not st.enabled:
             self._update_view_disabled()
             return
 
-        # Presence bookkeeping (also while paused, so away time keeps counting).
-        if self._present() or st.last_present is None:
-            st.last_present = now
-        away = bool(self.presence) and now - st.last_present >= s[CONF_AWAY_AFTER] * 60
-
         ac_state = self.hass.states.get(self.ac)
         room_state = self.hass.states.get(self.room_sensor)
         self._record_room(room_state)
-        room_now = self._number(room_state)
-        room = (
-            self.history.mean(now, s[CONF_AVERAGE_WINDOW] * 60)
-            if room_now is not None
-            else None
-        )
+        room_ok = self._number(room_state) is not None
+        room = self.history.mean(now, s[CONF_AVERAGE_WINDOW] * 60) if room_ok else None
         trend = (
             self.history.change(now, s[CONF_TREND_WINDOW] * 60)
             * 30
             / max(s[CONF_TREND_WINDOW], 1)
         )
-        fc = (
-            self.forecast.window(now, s[CONF_MAX_WAIT])
-            if self.forecast is not None
-            else None
-        )
+        wait_fc = exit_fc = None
+        if self.forecast is not None:
+            wait_fc = self.forecast.window(now, s[CONF_MAX_WAIT])
+            exit_fc = self.forecast.window(now, s[CONF_EXIT_WINDOW])
 
         if ac_state is None or ac_state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
             self.view = ControlView(
@@ -588,7 +601,7 @@ class ClimateController:
                 status="AC unavailable",
                 room=room,
                 trend=trend,
-                forecast=fc,
+                forecast=wait_fc,
             )
             self._save()
             return
@@ -599,84 +612,162 @@ class ClimateController:
                 status=f"Paused until {_hm(st.pause_until)} (manual change on the AC)",
                 room=room,
                 trend=trend,
-                forecast=fc,
+                forecast=wait_fc,
                 paused_until=dt_util.utc_from_timestamp(st.pause_until),
             )
             self._save()
             return
-        if st.pause_until is not None:
-            st.pause_until = None
+        st.pause_until = None
 
-        # Within the look-ahead before a day/night switch, act as if the next
-        # period had already started (saves heating/cooling the old range
-        # needs, pre-heats/-cools for the new one).
-        now_dt = dt_util.utcnow()
-        period = self.profile.period(now_dt)
-        period_low, period_high = self.profile.period_range(period)
-        ahead: str | None = None
-        look = s[CONF_LOOK_AHEAD] * 60
-        if look > 0:
-            switch_at, next_period = self.profile.upcoming(now_dt)
-            if next_period != period and (switch_at - now_dt).total_seconds() <= look:
-                period_low, period_high = self.profile.period_range(next_period)
-                ahead = f"{next_period} from {_hm(switch_at.timestamp())}"
+        active, high_power, power = self._activity()
+        if st.mode == MODE_NEUTRAL or active is None or active:
+            st.idle_since = None
+        elif st.idle_since is None:
+            st.idle_since = now
+
+        low, high, ahead = self._effective_range(now_dt)
         situation = Situation(
             now=now,
-            run=st.run,
+            mode=st.mode,
             profile_mode=self.profile.hvac_mode,
-            period_low=period_low,
-            period_high=period_high,
+            period_low=low,
+            period_high=high,
             room=room,
             trend=trend,
-            forecast=fc,
-            last_switch=st.last_switch,
+            wait_forecast=wait_fc,
+            exit_forecast=exit_fc,
+            idle_since=st.idle_since,
+            mode_since=st.mode_since,
             heat_ended=st.heat_ended,
             cool_ended=st.cool_ended,
             wait_since=st.wait_since,
+            drift_until=st.drift_until,
+            drift_side=st.drift_side,
         )
         d = decide(situation, s)
 
-        self._check_overshoot(now, d)
-        self._maybe_raise_offset(now, room, d)
+        if d.mode != st.mode:
+            self._switch_mode(d, room, trend, ahead, now)
+        st.wait_since = d.wait_since if d.mode == MODE_NEUTRAL else None
+        if d.mode == MODE_NEUTRAL and d.drift_until is None:
+            st.drift_until = st.drift_side = None
 
-        # Record switches.
-        if d.run != st.run:
-            if st.run == RUN_HEATING:
-                st.heat_ended = now
-                st.last_cycle = {"kind": "heat", "stop": d.stop_heat, "ended": now}
-            elif st.run == RUN_COOLING:
-                st.cool_ended = now
-                st.last_cycle = {"kind": "cool", "stop": d.stop_cool, "ended": now}
-            if d.run in (RUN_HEATING, RUN_COOLING):
-                st.reason = self._reason(d, room, trend, ahead)
-                st.reason_since = now
-            else:
-                st.reason, st.reason_since = "", None
-            _LOGGER.debug("Run %s -> %s (%s)", st.run, d.run, st.reason)
-            st.run = d.run
-            st.last_switch = now
-        st.wait_since = d.wait_since
+        # Layer 2: target and setpoint.
+        target = (
+            d.target_heat
+            if d.mode == MODE_HEAT
+            else d.target_cool
+            if d.mode == MODE_COOL
+            else None
+        )
+        if target != st.last_target:
+            st.last_target, st.target_changed_at = target, now
+        if target is not None:
+            self._learn(
+                d.mode == MODE_HEAT,
+                target,
+                self._number(room_state),
+                room,
+                active,
+                high_power,
+                now,
+            )
 
-        # What the AC should do.
-        idle_mode = s[CONF_IDLE_HVAC_MODE]
         attrs = ac_state.attributes
         setpoint: float | None = None
         if self.profile.hvac_mode == HVAC_MODE_OFF:
             want = self._ac_tuple(HVAC_MODE_OFF, None, None)
-        elif d.run == RUN_HEATING and d.stop_heat is not None:
-            setpoint = self._setpoint(d.stop_heat + st.offset_heat, attrs)
+        elif d.mode == MODE_HEAT and target is not None:
+            setpoint = self._setpoint(target + st.offset_heat, attrs)
             want = self._ac_tuple("heat", setpoint, s[CONF_ACTIVE_FAN_MODE])
-        elif d.run == RUN_COOLING and d.stop_cool is not None:
-            setpoint = self._setpoint(d.stop_cool - st.offset_cool, attrs)
+        elif d.mode == MODE_COOL and target is not None:
+            setpoint = self._setpoint(target - st.offset_cool, attrs)
             want = self._ac_tuple("cool", setpoint, s[CONF_ACTIVE_FAN_MODE])
-        elif away:
-            want = self._ac_tuple(HVAC_MODE_OFF, None, None)
         else:
-            want = self._ac_tuple(idle_mode, None, s[CONF_IDLE_FAN_MODE])
+            want = self._ac_tuple(s[CONF_IDLE_HVAC_MODE], None, s[CONF_IDLE_FAN_MODE])
         await self._async_send(want, ac_state)
 
-        self.view = self._build_view(d, room, trend, fc, setpoint, away, ahead)
+        self.view = self._build_view(
+            d, room, trend, wait_fc, target, setpoint, ahead, active, power
+        )
         self._save()
+
+    def _switch_mode(
+        self,
+        d: Decision,
+        room: float | None,
+        trend: float,
+        ahead: str | None,
+        now: float,
+    ) -> None:
+        st = self.state
+        if st.mode == MODE_HEAT:
+            st.heat_ended = now
+        elif st.mode == MODE_COOL:
+            st.cool_ended = now
+        if d.mode in (MODE_HEAT, MODE_COOL):
+            st.reason = self._reason(d, room, trend, ahead)
+            st.reason_since = now
+        else:
+            st.reason, st.reason_since = "", None
+        if d.early_exit:
+            st.drift_until, st.drift_side = d.drift_until, d.drift_side
+        else:
+            st.drift_until = st.drift_side = None
+        _LOGGER.debug("Mode %s -> %s (%s)", st.mode, d.mode, st.reason)
+        st.mode = d.mode
+        st.mode_since = now
+        st.idle_since = None
+
+    def _learn(
+        self,
+        heating: bool,
+        target: float,
+        room_now: float | None,
+        room: float | None,
+        active: bool | None,
+        high_power: bool | None,
+        now: float,
+    ) -> None:
+        """One learning step of the offset, if it's time."""
+        st, s = self.state, self.settings
+        if not s[CONF_AUTO_TUNE]:
+            return
+        settle = s[CONF_LEARN_SETTLE] * 60
+        if st.mode_since is not None and now - st.mode_since < settle:
+            return
+        if st.target_changed_at is not None and now - st.target_changed_at < settle:
+            return
+        if (
+            st.learned_at is not None
+            and now - st.learned_at < s[CONF_LEARN_INTERVAL] * 60
+        ):
+            return
+        offset = st.offset_heat if heating else st.offset_cool
+        new = learn_step(
+            heating=heating,
+            target=target,
+            room_now=room_now,
+            room=room,
+            room_long=self.history.mean(now, s[CONF_LEARN_AVERAGE] * 60),
+            offset=offset,
+            active=active,
+            high_power=high_power,
+            settings=s,
+        )
+        if new is None:
+            return
+        if heating:
+            st.offset_heat = new
+        else:
+            st.offset_cool = new
+        st.learned_at = now
+        _LOGGER.info(
+            "Learned %s offset %.2f -> %.2f",
+            "heating" if heating else "cooling",
+            offset,
+            new,
+        )
 
     def _setpoint(self, value: float, attrs: dict[str, Any]) -> float:
         def num(key: str, default: float) -> float:
@@ -745,77 +836,6 @@ class ClimateController:
             except (HomeAssistantError, ValueError) as err:
                 _LOGGER.warning("Could not %s on %s: %s", service, self.ac, err)
 
-    # ----- offset tuning ---------------------------------------------------
-
-    def _check_overshoot(self, now: float, d: Decision) -> None:
-        """After a run: overshoot -> lower the offset (once per run)."""
-        cycle = self.state.last_cycle
-        if cycle is None:
-            return
-        window_end = cycle["ended"] + self.settings[CONF_OVERSHOOT_WINDOW] * 60
-        starting = d.run != RUN_IDLE and self.state.run == RUN_IDLE
-        if now < window_end and not starting:
-            return
-        self.state.last_cycle = None
-        stop = cycle.get("stop")
-        if not self.settings[CONF_AUTO_TUNE] or stop is None:
-            return
-        until = min(now, window_end)
-        heat = cycle["kind"] == "heat"
-        extreme = self.history.extreme_since(cycle["ended"], until, highest=heat)
-        if extreme is None:
-            return
-        overshoot = extreme - stop if heat else stop - extreme
-        if overshoot > self.settings[CONF_OVERSHOOT]:
-            self._change_offset("heat" if heat else "cool", -1, now, overshoot)
-
-    def _maybe_raise_offset(self, now: float, room: float | None, d: Decision) -> None:
-        """During a run: compressor idle while short of the stop point -> raise."""
-        st, s = self.state, self.settings
-        if not s[CONF_AUTO_TUNE] or not self.compressor or room is None:
-            return
-        if st.run not in (RUN_HEATING, RUN_COOLING) or d.run != st.run:
-            return
-        idle = s[CONF_RAISE_IDLE] * 60
-        if st.last_switch is None or now - st.last_switch < idle:
-            return
-        comp = self.hass.states.get(self.compressor)
-        if comp is None or comp.state != "off":
-            return
-        if now - comp.last_changed.timestamp() < idle:
-            return
-        heat = st.run == RUN_HEATING
-        stop = d.stop_heat if heat else d.stop_cool
-        if stop is None:
-            return
-        margin = s[CONF_RAISE_MARGIN]
-        if (heat and room >= stop - margin) or (not heat and room <= stop + margin):
-            return
-        changed = st.offset_heat_changed if heat else st.offset_cool_changed
-        if changed is not None and now - changed < idle:
-            return
-        self._change_offset("heat" if heat else "cool", +1, now, None)
-
-    def _change_offset(
-        self, kind: str, direction: int, now: float, overshoot: float | None
-    ) -> None:
-        s = self.settings
-        step, top = s[CONF_OFFSET_STEP], s[CONF_OFFSET_MAX]
-        old = self.state.offset_heat if kind == "heat" else self.state.offset_cool
-        new = round(min(max(old + direction * step, 0.0), top), 2)
-        if new == old:
-            return
-        if kind == "heat":
-            self.state.offset_heat, self.state.offset_heat_changed = new, now
-        else:
-            self.state.offset_cool, self.state.offset_cool_changed = new, now
-        if overshoot is None:
-            _LOGGER.info(
-                "Compressor idle, room short of target: %s offset %s", kind, new
-            )
-        else:
-            _LOGGER.info("Overshoot %.1f °C: %s offset %s", overshoot, kind, new)
-
     # ----- texts -----------------------------------------------------------
 
     def _reason(
@@ -827,33 +847,33 @@ class ClimateController:
     def _reason_text(self, d: Decision, room: float | None, trend: float) -> str:
         s = self.settings
         r = _t(room)
-        waited = d.extra.get("waited_before_start", 0.0)
-        if d.run == RUN_HEATING:
-            if d.hard:
-                return (
-                    f"Hard limit: room {r} °C, more than {s['hard_margin']} °C "
-                    f"below the minimum {_t(d.low)} °C"
-                )
-            base = f"Too cold ({r} °C, minimum {_t(d.low)} °C)"
-            if not d.warmth_forecast:
-                return f"{base}, no sun or warmth expected"
-            if trend <= -s["fast_trend"]:
-                return f"{base} and cooling down quickly ({trend:+.2f} °C/30 min)"
-            if waited >= s["max_wait"]:
-                return f"{base}, waited {s['max_wait']:g} min for sun or warmth"
-            return base
-        if d.hard:
+        heat = d.mode == MODE_HEAT
+        limit = d.low if heat else d.high
+        if d.reason == "hard":
+            side = "below the minimum" if heat else "above the maximum"
             return (
-                f"Hard limit: room {r} °C, more than {s['hard_margin']} °C "
-                f"above the maximum {_t(d.high)} °C"
+                f"Hard limit: room {r} °C, more than {s[CONF_HARD_MARGIN]:g} °C "
+                f"{side} {_t(limit)} °C"
             )
-        base = f"Too warm ({r} °C, maximum {_t(d.high)} °C)"
-        if not d.cool_forecast:
-            return f"{base}, no cooler outside air expected"
-        if trend >= s["fast_trend"]:
-            return f"{base} and warming up quickly ({trend:+.2f} °C/30 min)"
-        if waited >= s["max_wait"]:
-            return f"{base}, waited {s['max_wait']:g} min for cooler outside air"
+        base = (
+            f"Near minimum ({r} °C, minimum {_t(limit)} °C)"
+            if heat
+            else f"Near maximum ({r} °C, maximum {_t(limit)} °C)"
+        )
+        free = "sun or warmth" if heat else "cooler outside air"
+        if d.reason == "no_forecast":
+            return (
+                f"{base}, no sun or warmth expected"
+                if heat
+                else f"{base}, no cooler outside air expected"
+            )
+        if d.reason == "fast":
+            how = "cooling down" if heat else "warming up"
+            return f"{base} and {how} quickly ({trend:+.2f} °C/30 min)"
+        if d.reason == "waited":
+            return f"{base}, waited {s[CONF_MAX_WAIT]:g} min for {free}"
+        if d.reason == "drift_over":
+            return f"{base}, {free} didn't come within {s[CONF_DRIFT_TIME]:g} min"
         return base
 
     def _build_view(
@@ -862,42 +882,34 @@ class ClimateController:
         room: float | None,
         trend: float,
         fc: ForecastWindow | None,
+        target: float | None,
         setpoint: float | None,
-        away: bool,
-        ahead: str | None = None,
+        ahead: str | None,
+        active: bool | None,
+        power: float | None,
     ) -> ControlView:
         st, s = self.state, self.settings
-        note = f" ({ahead})" if ahead else ""
         idle_label = s[CONF_IDLE_HVAC_MODE].replace("_", " ")
-        idle_text = "AC off" if away else idle_label
+        note = f" ({ahead})" if ahead else ""
         waiting_until: datetime | None = None
 
         if self.profile.hvac_mode == HVAC_MODE_OFF:
             state, status = STATE_OFF, "Profile off – AC off"
         elif room is None:
             state = CONTROL_UNAVAILABLE
-            status = f"Room sensor unavailable – {idle_text}"
-        elif d.run == RUN_HEATING:
+            status = f"Room sensor unavailable – {idle_label}"
+        elif d.mode == MODE_HEAT:
             state = STATE_HEATING
-            status = (
-                f"Heating – {_t(d.stop_heat)} °C reached, minimum run until "
-                f"{_hm(d.min_run_until)}"
-                if d.min_run_until is not None
-                else f"Heating to {_t(d.stop_heat)} °C"
-            ) + note
-        elif d.run == RUN_COOLING:
+            status = f"Heating mode – holding {_t(target)} °C{note}"
+        elif d.mode == MODE_COOL:
             state = STATE_COOLING
-            status = (
-                f"Cooling – {_t(d.stop_cool)} °C reached, minimum run until "
-                f"{_hm(d.min_run_until)}"
-                if d.min_run_until is not None
-                else f"Cooling to {_t(d.stop_cool)} °C"
-            ) + note
+            status = f"Cooling mode – holding {_t(target)} °C{note}"
         elif d.waiting:
             state = STATE_WAITING
-            word = "Too cold" if d.heat_zone else "Too warm"
-            if d.min_pause_until is not None:
-                status = f"{word} – minimum pause until {_hm(d.min_pause_until)}"
+            word = "Near minimum" if d.heat_zone else "Near maximum"
+            if d.gap_until is not None:
+                what = "heating" if d.heat_zone else "cooling"
+                status = f"{word} – {what} possible from {_hm(d.gap_until)}"
             elif d.lockout_until is not None:
                 other = "cooling" if d.heat_zone else "heating"
                 status = f"{word} – locked after {other} until {_hm(d.lockout_until)}"
@@ -910,14 +922,8 @@ class ClimateController:
             else:
                 status = word
             status += note
-            if away:
-                status += " (away – AC off)"
-        elif away:
-            state = STATE_AWAY
-            assert st.last_present is not None
-            status = f"Away since {_hm(st.last_present)} – AC off"
         else:
-            state = STATE_IDLE
+            state = STATE_NEUTRAL
             if d.low is not None and d.high is not None:
                 rng = f"{_t(d.low)}–{_t(d.high)} °C"
             elif d.low is not None:
@@ -925,26 +931,32 @@ class ClimateController:
             else:
                 rng = f"≤ {_t(d.high)} °C"
             status = f"In range {rng}{note} – {idle_label}"
+            if st.drift_until is not None and st.drift_side in ("heat", "cool"):
+                heat = st.drift_side == "heat"
+                limit = d.threshold_heat if heat else d.threshold_cool
+                weather = "warm" if heat else "cool"
+                status += (
+                    f" ({weather} outside: may drift to {_t(limit)} °C "
+                    f"until {_hm(st.drift_until)})"
+                )
+                waiting_until = dt_util.utc_from_timestamp(st.drift_until)
 
         attributes = {
-            "run": d.run,
+            "mode": d.mode,
             "room": None if room is None else round(room, 2),
             "minimum": d.low,
             "maximum": d.high,
-            "stop": d.stop_heat
-            if d.run == RUN_HEATING
-            else d.stop_cool
-            if d.run == RUN_COOLING
-            else None,
+            "target": target,
             "ac_setpoint": setpoint,
+            "offset_heat": st.offset_heat,
+            "offset_cool": st.offset_cool,
+            "ac_active": active,
+            "ac_power": power,
             "trend_per_30min": round(trend, 2),
             "waited_min": round(d.waited),
             "warmth_coming": d.warmth_coming,
             "free_cooling": d.free_cooling,
-            "away": away,
             "look_ahead": ahead,
-            "offset_heat": st.offset_heat,
-            "offset_cool": st.offset_cool,
         }
         return ControlView(
             state=state,

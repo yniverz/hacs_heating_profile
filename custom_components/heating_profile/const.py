@@ -52,53 +52,71 @@ CARD_FILENAME = "heating-profile-card.js"
 CARD_URL = f"/{DOMAIN}/{CARD_FILENAME}"
 
 # --- Climate control (optional per profile, set up in the options flow) ---
+#
+# Layer 1 picks a mode (neutral / heat / cool) and changes it rarely.
+# Layer 2 only sets the AC's setpoint (target + learned offset) and lets the
+# AC modulate on its own.
 
 CONTROL_STORAGE_VERSION = 1
 
 # Sources
 CONF_ROOM_SENSOR = "room_sensor"
 CONF_AC = "ac_entity"
+CONF_POWER_SENSOR = "power_sensor"
 CONF_COMPRESSOR = "compressor_sensor"
-CONF_PRESENCE = "presence_entity"
 CONF_USE_FORECAST = "use_forecast"
+SOURCE_KEYS = (CONF_ROOM_SENSOR, CONF_AC, CONF_POWER_SENSOR, CONF_COMPRESSOR)
 
 # AC modes
 CONF_IDLE_HVAC_MODE = "idle_hvac_mode"
 CONF_IDLE_FAN_MODE = "idle_fan_mode"
 CONF_ACTIVE_FAN_MODE = "active_fan_mode"
 
-# Start / stop
-CONF_START_OFFSET = "start_offset"
+# Targets
+CONF_TARGET_MARGIN = "target_margin"
+CONF_START_MARGIN = "start_margin"
 CONF_HARD_MARGIN = "hard_margin"
-CONF_STOP_POSITION = "stop_position"
-CONF_STOP_PAST_TARGET = "stop_past_target"
-CONF_MIN_RUN = "min_run"
-CONF_MIN_PAUSE = "min_pause"
-CONF_LOCKOUT = "lockout"
 CONF_LOOK_AHEAD = "look_ahead"
 
-# Waiting for free warmth / cooling
+# Mode changes
+CONF_MIN_MODE_TIME = "min_mode_time"
+CONF_IDLE_EXIT = "idle_exit"
+CONF_SWITCH_GAP = "switch_gap"
+CONF_LOCKOUT = "lockout"
+
+# Waiting for free warmth / cooling before a mode starts
 CONF_MAX_WAIT = "max_wait"
 CONF_FAST_TREND = "fast_trend"
 CONF_WARMTH_MARGIN = "warmth_margin"
 CONF_COOL_MARGIN = "cool_margin"
 CONF_SUN_THRESHOLD = "sun_threshold"
 
-# Setpoint offsets
+# Early switch to neutral when it gets really warm / cool outside
+CONF_EARLY_EXIT = "early_exit"
+CONF_EXIT_WARMTH_MARGIN = "exit_warmth_margin"
+CONF_EXIT_COOL_MARGIN = "exit_cool_margin"
+CONF_EXIT_WINDOW = "exit_window"
+CONF_EXIT_SUN = "exit_sun"
+CONF_DRIFT_MARGIN = "drift_margin"
+CONF_DRIFT_TIME = "drift_time"
+
+# Learning the setpoint offset
 CONF_AUTO_TUNE = "auto_tune"
+CONF_LEARN_INTERVAL = "learn_interval"
+CONF_LEARN_GAIN = "learn_gain"
+CONF_LEARN_DEADBAND = "learn_deadband"
+CONF_LEARN_MAX_ERROR = "learn_max_error"
+CONF_LEARN_SETTLE = "learn_settle"
+CONF_LEARN_AVERAGE = "learn_average"
+CONF_OFFSET_MIN = "offset_min"
 CONF_OFFSET_MAX = "offset_max"
 CONF_OFFSET_STEP = "offset_step"
-CONF_RAISE_IDLE = "raise_idle"
-CONF_RAISE_MARGIN = "raise_margin"
-CONF_OVERSHOOT = "overshoot"
-CONF_OVERSHOOT_WINDOW = "overshoot_window"
+CONF_ACTIVE_POWER = "active_power"
+CONF_HIGH_POWER = "high_power"
 
 # Manual changes on the AC
 CONF_PAUSE = "pause"
 CONF_COMMAND_GRACE = "command_grace"
-
-# Presence
-CONF_AWAY_AFTER = "away_after"
 
 # Measurement
 CONF_AVERAGE_WINDOW = "average_window"
@@ -106,32 +124,43 @@ CONF_TREND_WINDOW = "trend_window"
 
 # Defaults of the numeric/boolean settings (unit in the comment).
 CONTROL_DEFAULTS: dict[str, float | bool] = {
-    CONF_START_OFFSET: 0.3,  # °C beyond minimum/maximum before a run starts
-    CONF_HARD_MARGIN: 1.5,  # °C beyond minimum/maximum: start regardless
-    CONF_STOP_POSITION: 50,  # % into the range where a heat_cool run stops
-    CONF_STOP_PAST_TARGET: 0.3,  # °C past the target in heat/cool mode
-    CONF_MIN_RUN: 20,  # min
-    CONF_MIN_PAUSE: 20,  # min
-    CONF_LOCKOUT: 6,  # h between heating and cooling
+    CONF_USE_FORECAST: True,
+    CONF_TARGET_MARGIN: 0.3,  # °C: heat target = min + this, cool target = max - this
+    CONF_START_MARGIN: 0.1,  # °C: heating starts at min + this (cooling max - this)
+    CONF_HARD_MARGIN: 1.5,  # °C beyond min/max: switch mode right away
     CONF_LOOK_AHEAD: 30,  # min before a day/night switch: use the next range
-    CONF_MAX_WAIT: 60,  # min to wait for free warmth/cooling
+    CONF_MIN_MODE_TIME: 120,  # min in heat/cool before the idle exit
+    CONF_IDLE_EXIT: 60,  # min the AC idles in heat/cool -> neutral
+    CONF_SWITCH_GAP: 30,  # min between neutral and heat/cool (both ways)
+    CONF_LOCKOUT: 6,  # h between heating and cooling
+    CONF_MAX_WAIT: 60,  # min to wait for free warmth/cooling before starting
     CONF_FAST_TREND: 0.3,  # °C per 30 min the wrong way: don't wait
     CONF_WARMTH_MARGIN: 1.0,  # °C above the minimum outside counts as warmth
     CONF_COOL_MARGIN: 2.0,  # °C below the maximum outside counts as cool air
     CONF_SUN_THRESHOLD: 250,  # W/m² mean global radiation
+    CONF_EARLY_EXIT: True,
+    CONF_EXIT_WARMTH_MARGIN: 3.0,  # °C above the minimum the whole window
+    CONF_EXIT_COOL_MARGIN: 3.0,  # °C below the maximum the whole window
+    CONF_EXIT_WINDOW: 120,  # min of forecast for the early exit
+    CONF_EXIT_SUN: 400,  # W/m² mean global radiation for the early exit
+    CONF_DRIFT_MARGIN: 0.3,  # °C the room may drift past the limit after it
+    CONF_DRIFT_TIME: 60,  # min it may drift
     CONF_AUTO_TUNE: True,
-    CONF_OFFSET_MAX: 5.0,  # °C
-    CONF_OFFSET_STEP: 0.5,  # °C
-    CONF_RAISE_IDLE: 15,  # min compressor idle during a run -> raise offset
-    CONF_RAISE_MARGIN: 0.2,  # °C short of the stop point
-    CONF_OVERSHOOT: 1.0,  # °C past the stop point after a run -> lower offset
-    CONF_OVERSHOOT_WINDOW: 30,  # min after a run
+    CONF_LEARN_INTERVAL: 20,  # min between learning steps
+    CONF_LEARN_GAIN: 0.5,  # share of the error corrected per step
+    CONF_LEARN_DEADBAND: 0.2,  # °C error that is ignored
+    CONF_LEARN_MAX_ERROR: 1.0,  # °C: farther off is warm-up, not learned
+    CONF_LEARN_SETTLE: 30,  # min after a mode/target change without learning
+    CONF_LEARN_AVERAGE: 30,  # min room average used for learning
+    CONF_OFFSET_MIN: -2.0,  # °C
+    CONF_OFFSET_MAX: 6.0,  # °C
+    CONF_OFFSET_STEP: 0.5,  # °C largest change per learning step
+    CONF_ACTIVE_POWER: 50,  # W: the AC is working
+    CONF_HIGH_POWER: 200,  # W: the AC works hard (warm-up, not learned)
     CONF_PAUSE: 120,  # min after a manual change on the AC
     CONF_COMMAND_GRACE: 90,  # s after an own command
-    CONF_AWAY_AFTER: 60,  # min absent -> AC off while idle
     CONF_AVERAGE_WINDOW: 10,  # min
     CONF_TREND_WINDOW: 30,  # min
-    CONF_USE_FORECAST: True,
 }
 DEFAULT_IDLE_HVAC_MODE = "fan_only"
 DEFAULT_IDLE_FAN_MODE = "silent"
@@ -143,8 +172,7 @@ STATE_DISABLED = "disabled"
 STATE_UNAVAILABLE = "unavailable"
 STATE_PAUSED = "paused"
 STATE_OFF = "off"
-STATE_AWAY = "away"
-STATE_IDLE = "idle"
+STATE_NEUTRAL = "neutral"
 STATE_WAITING = "waiting"
 STATE_HEATING = "heating"
 STATE_COOLING = "cooling"
@@ -153,17 +181,17 @@ CONTROL_STATES = [
     STATE_UNAVAILABLE,
     STATE_PAUSED,
     STATE_OFF,
-    STATE_AWAY,
-    STATE_IDLE,
+    STATE_NEUTRAL,
     STATE_WAITING,
     STATE_HEATING,
     STATE_COOLING,
 ]
 
-# Runs (what the AC is asked to do)
-RUN_IDLE = "idle"
-RUN_HEATING = "heating"
-RUN_COOLING = "cooling"
+# Modes (layer 1)
+MODE_NEUTRAL = "neutral"
+MODE_HEAT = "heat"
+MODE_COOL = "cool"
+MODES = (MODE_NEUTRAL, MODE_HEAT, MODE_COOL)
 
 CONTROL_INTERVAL_SECONDS = 60
 # The same command is repeated at most this often if the AC doesn't follow.

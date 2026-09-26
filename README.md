@@ -248,10 +248,10 @@ data:
 
 | Field | |
 | --- | --- |
-| Room temperature sensor | The control decides only on this sensor (averaged). Required. |
+| Room temperature sensor | The control decides only on this sensor. Required. |
 | Air conditioner | Climate entity that gets the commands. Required. |
-| Compressor running sensor | Optional. Binary sensor, on while the compressor runs. Lets the control raise the setpoint offset. |
-| Presence | Optional. Binary sensor, person or device tracker; on/home = present, unavailable counts as present. |
+| AC power sensor | Shows whether the AC works and how hard (leaving a mode, learning). This or the compressor sensor is required. |
+| Compressor running sensor | Used instead of the power sensor if that isn't set. |
 | Use the weather forecast | Hourly Open-Meteo forecast for the Home Assistant location (no API key). |
 
 Leave room sensor and AC empty to turn the control off again; its entities
@@ -259,46 +259,48 @@ are removed, the other settings are kept.
 
 ### How it works
 
-Every minute the control compares the room temperature (averaged over 10 min)
-with the profile's range for the current period:
+The control works in two layers and lets the AC modulate by itself:
 
-| Profile mode | The control |
+**1. Mode (neutral / heat / cool), changed rarely.** Neutral runs the idle
+mode (e.g. fan only, silent).
+
+| Profile mode | Modes used |
 | --- | --- |
-| Auto (range) | heats below the minimum, cools above the maximum, idles in between |
-| Heat / Cool | only heats to the target / only cools to the target |
-| Off | switches the AC off |
+| Auto (range) | heat below, cool above the range, neutral in between |
+| Heat / Cool | only heat / only cool |
+| Off | the AC is switched off |
 
-- **Starting:** 0.3 °C below the minimum (above the maximum). 1.5 °C beyond
-  the limit (hard limit) a run starts regardless of forecast and lockout.
-- **Stopping:** in Auto at the middle of the range (so the room has room to
-  drift), in Heat/Cool 0.3 °C past the target; not before the minimum run time
-  of 20 min. The next run starts 20 min later at the earliest.
-- **Lockout:** no cooling within 6 h after heating and the other way round
-  (except at the hard limit).
+- **Neutral → heat** when the room (10-min average) reaches the minimum +
+  0.1 °C, unless free warmth is coming: at least minimum + 1 °C outside for
+  the whole next hour, or sun ≥ 250 W/m². It waits at most 60 min, and not
+  while the room falls 0.3 °C per 30 min or faster. Cool mode mirrored (maximum
+  − 0.1 °C; at most maximum − 2 °C outside).
+- **Heat → neutral** when the AC has idled for 60 min (power sensor or
+  compressor), the room is at the target and the mode has lasted 2 h.
+- **Early switch to neutral:** if it stays really warm outside (minimum +
+  3 °C for the next 2 h, or sun ≥ 400 W/m²) and the room is at least at the
+  minimum. The room may then drift 0.3 °C below the minimum for up to 60 min
+  before heat mode comes back. Cooling mirrored.
+- **Protection:** at least 30 min between neutral and heat/cool, 6 h between
+  heating and cooling; 1.5 °C beyond the range switches right away.
 - **Look ahead:** 30 min before a day/night switch (or the end of a manual
-  day/night override) the control already uses the next period's range. It
-  skips heating or cooling the old range no longer needs, pre-heats or
-  pre-cools for the new one, and a running run stops at the next period's
-  stop point. The status shows it, e.g. `In range 17.0–24.0 °C (night from
-  22:00) – fan only`.
-- **Waiting for free warmth or cooling:** before heating, the control waits if
-  it stays at least 1 °C above the minimum outside for the whole next hour, or
-  the sun brings at least 250 W/m². Before cooling, if it stays at least 2 °C
-  below the maximum outside. It waits at most 60 min, and not while the room
-  moves 0.3 °C per 30 min or more the wrong way.
-- **Idle:** the AC runs in the idle mode (e.g. fan only, silent). With a
-  presence entity, after 60 min away the AC is switched off instead; heating
-  and cooling runs still happen while away.
-- **Setpoint offset:** the AC gets the stop point plus (heating) or minus
-  (cooling) an offset of 2 °C to make up for its own sensor. With the
-  compressor sensor it's raised by 0.5 °C when the compressor idles for 15 min
-  during a run while the room is still short; it's lowered by 0.5 °C when the
-  room overshoots the stop point by more than 1 °C within 30 min after a run.
-- **Manual changes:** a change on the AC the control didn't send (remote, app,
-  another automation) pauses the control for 2 h. *End pause* or switching the
-  control off and on resumes it right away.
-- The same command is repeated at most every 10 min if the AC doesn't follow.
-- Room sensor unavailable: idle. AC unavailable: nothing is sent.
+  override) the next period's range applies: pre-heat/-cool for it, skip
+  what the old range no longer needs.
+
+**2. Setpoint.** Heat mode holds minimum + 0.3 °C, cool mode maximum −
+0.3 °C. The AC gets that target plus (heating) or minus (cooling) an
+**offset** that makes up for its own sensor (it sits in its own air stream).
+The offset is learned from the room sensor every 20 min: raised when the room
+stays too cold while the AC idles or works gently, lowered when it's too warm
+while the AC works. Nothing is learned during warm-up (high power), while the
+AC cycles by itself, far from the target, or while the room is still changing
+(current reading, 10-min and 30-min average must agree). Starting value
+2 °C, range −2 to +6 °C, at most 0.5 °C per step.
+
+**Also:** a change on the AC the control didn't send (remote, app, another
+automation) pauses the control for 2 h; *End pause* or switching the control
+off and on resumes it. The same command is repeated at most every 10 min.
+Room sensor unavailable: neutral. AC unavailable: nothing is sent.
 
 Every number above is a setting in the second step of *Configure*.
 
@@ -310,11 +312,18 @@ For a profile called `Living room`:
 | --- | --- |
 | `switch.living_room_climate_control` | control on/off (off: nothing is sent to the AC) |
 | `button.living_room_end_pause` | end a pause after a manual change |
-| `sensor.living_room_control_status` | what it does, e.g. `Too cold – waiting for sun or warmth until 14:32`; only changes when the situation changes, live values are attributes |
-| `sensor.living_room_control_reason` | why the current run started; empty while idle |
-| `sensor.living_room_control_state` | `disabled`, `unavailable`, `paused`, `off`, `away`, `idle`, `waiting`, `heating`, `cooling` |
-| `number.living_room_heating_offset`, `number.living_room_cooling_offset` | setpoint offsets (tune themselves, can be set) |
+| `sensor.living_room_control_status` | what it does, e.g. `Heating mode – holding 21.3 °C`; only changes when the situation changes, live values are attributes |
+| `sensor.living_room_control_reason` | why the current heat/cool mode started; empty in neutral |
+| `sensor.living_room_control_state` | `disabled`, `unavailable`, `paused`, `off`, `neutral`, `waiting`, `heating`, `cooling` |
+| `number.living_room_heating_offset`, `number.living_room_cooling_offset` | learned offsets (can be set by hand) |
 | diagnostic sensors (disabled by default) | room average, room trend, forecast outside minimum/maximum and radiation for the next waiting window, AC setpoint, waiting until, paused until |
+
+## Upgrading from 0.6.x
+
+The on/off control (heat to the middle of the range, then fan) is replaced
+by the mode + setpoint control above. Presence is gone. Learned offsets are
+kept. Open *Configure* once: choose the AC power sensor and check the new
+settings (the old ones are dropped when you save).
 
 ## Storage
 

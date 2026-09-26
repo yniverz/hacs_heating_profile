@@ -67,11 +67,10 @@
           "heating": "mdi:fire",
           "cooling": "mdi:snowflake",
           "waiting": "mdi:timer-sand",
-          "away": "mdi:home-export-outline",
           "paused": "mdi:pause-circle-outline",
           "off": "mdi:power",
           "disabled": "mdi:robot-off",
-          "idle": "mdi:fan",
+          "neutral": "mdi:fan",
           "unavailable": "mdi:alert-circle-outline"
         }
       },

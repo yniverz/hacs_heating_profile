@@ -7,27 +7,39 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .const import (
     CONF_COOL_MARGIN,
+    CONF_DRIFT_MARGIN,
+    CONF_DRIFT_TIME,
+    CONF_EARLY_EXIT,
+    CONF_EXIT_COOL_MARGIN,
+    CONF_EXIT_SUN,
+    CONF_EXIT_WARMTH_MARGIN,
     CONF_FAST_TREND,
     CONF_HARD_MARGIN,
+    CONF_IDLE_EXIT,
+    CONF_LEARN_DEADBAND,
+    CONF_LEARN_GAIN,
+    CONF_LEARN_MAX_ERROR,
     CONF_LOCKOUT,
     CONF_MAX_WAIT,
-    CONF_MIN_PAUSE,
-    CONF_MIN_RUN,
-    CONF_START_OFFSET,
-    CONF_STOP_PAST_TARGET,
-    CONF_STOP_POSITION,
+    CONF_MIN_MODE_TIME,
+    CONF_OFFSET_MAX,
+    CONF_OFFSET_MIN,
+    CONF_OFFSET_STEP,
+    CONF_START_MARGIN,
     CONF_SUN_THRESHOLD,
+    CONF_SWITCH_GAP,
+    CONF_TARGET_MARGIN,
     CONF_WARMTH_MARGIN,
     HVAC_MODE_COOL,
     HVAC_MODE_HEAT,
     HVAC_MODE_HEAT_COOL,
-    RUN_COOLING,
-    RUN_HEATING,
-    RUN_IDLE,
+    MODE_COOL,
+    MODE_HEAT,
+    MODE_NEUTRAL,
 )
 
 
@@ -177,45 +189,54 @@ def forecast_window(
 
 @dataclass
 class Situation:
-    """Everything a decision is based on."""
+    """Everything a mode decision is based on."""
 
     now: float
-    run: str  # current run: idle / heating / cooling
+    mode: str  # current mode: neutral / heat / cool
     profile_mode: str
-    period_low: float  # minimum of the active period
-    period_high: float  # maximum of the active period
-    room: float | None  # smoothed room temperature
+    period_low: float  # minimum of the period that applies (look-ahead done)
+    period_high: float  # maximum of that period
+    room: float | None  # room temperature averaged over a few minutes
     trend: float  # °C per 30 min
-    forecast: ForecastWindow | None
-    last_switch: float | None
+    wait_forecast: ForecastWindow | None  # next max_wait minutes
+    exit_forecast: ForecastWindow | None  # next exit_window minutes
+    idle_since: float | None  # AC idle (not heating/cooling) since
+    mode_since: float | None
     heat_ended: float | None
     cool_ended: float | None
     wait_since: float | None
+    drift_until: float | None
+    drift_side: str | None = None  # "heat" / "cool": which limit may drift
 
 
 @dataclass
 class Decision:
-    """Result of one evaluation."""
+    """Result of one mode decision."""
 
-    run: str
-    low: float | None  # minimum that applies in this mode (None: no heating)
-    high: float | None  # maximum that applies in this mode (None: no cooling)
-    stop_heat: float | None
-    stop_cool: float | None
-    heat_zone: bool = False
+    mode: str
+    low: float | None  # minimum that applies (None: the profile doesn't heat)
+    high: float | None  # maximum that applies (None: the profile doesn't cool)
+    target_heat: float | None
+    target_cool: float | None
+    # Why a heat/cool mode starts now:
+    # hard / no_forecast / fast / waited / drift_over / near
+    reason: str = ""
+    early_exit: bool = False  # left heat/cool because it gets warm/cool outside
+    drift_until: float | None = None
+    drift_side: str | None = None
+    heat_zone: bool = False  # neutral and at/below the heating start point
     cool_zone: bool = False
-    hard: bool = False  # started because of the hard limit
+    threshold_heat: float | None = None
+    threshold_cool: float | None = None
     warmth_forecast: bool = False
     cool_forecast: bool = False
     warmth_coming: bool = False
     free_cooling: bool = False
-    waiting: bool = False  # outside the range, but not running
+    waiting: bool = False  # in a zone, but not started (yet)
     wait_since: float | None = None
     waited: float = 0.0  # minutes
-    min_pause_until: float | None = None
-    min_run_until: float | None = None
+    gap_until: float | None = None  # waiting for the switch gap
     lockout_until: float | None = None
-    extra: dict = field(default_factory=dict)
 
 
 def limits(mode: str, low: float, high: float) -> tuple[float | None, float | None]:
@@ -229,126 +250,241 @@ def limits(mode: str, low: float, high: float) -> tuple[float | None, float | No
     return None, None
 
 
-def stop_points(
-    mode: str, low: float | None, high: float | None, settings: dict
-) -> tuple[float | None, float | None]:
-    """Where a heating and a cooling run stop."""
-    if mode == HVAC_MODE_HEAT_COOL and low is not None and high is not None:
-        point = low + (high - low) * settings[CONF_STOP_POSITION] / 100
-        return point, point
-    past = settings[CONF_STOP_PAST_TARGET]
-    return (
-        low + past if low is not None else None,
-        high - past if high is not None else None,
+def _warm_outside(
+    fc: ForecastWindow | None, low: float | None, margin: float, sun: float
+) -> bool:
+    return bool(
+        fc is not None
+        and low is not None
+        and (
+            (fc.min_temp is not None and fc.min_temp >= low + margin)
+            or (fc.radiation is not None and fc.radiation >= sun)
+        )
+    )
+
+
+def _cool_outside(fc: ForecastWindow | None, high: float | None, margin: float) -> bool:
+    return bool(
+        fc is not None
+        and high is not None
+        and fc.max_temp is not None
+        and fc.max_temp <= high - margin
     )
 
 
 def decide(s: Situation, settings: dict) -> Decision:
-    """Decide whether to heat, cool or stay idle."""
+    """Decide the mode (neutral / heat / cool)."""
     low, high = limits(s.profile_mode, s.period_low, s.period_high)
-    stop_heat, stop_cool = stop_points(s.profile_mode, low, high, settings)
-    d = Decision(RUN_IDLE, low, high, stop_heat, stop_cool)
-
-    min_run = settings[CONF_MIN_RUN] * 60
-    min_pause = settings[CONF_MIN_PAUSE] * 60
-    lockout = settings[CONF_LOCKOUT] * 3600
-    since_switch = s.now - s.last_switch if s.last_switch is not None else None
-
+    margin = settings[CONF_TARGET_MARGIN]
+    d = Decision(
+        mode=s.mode,
+        low=low,
+        high=high,
+        target_heat=low + margin if low is not None else None,
+        target_cool=high - margin if high is not None else None,
+    )
+    if s.drift_until is not None and s.now < s.drift_until and s.drift_side:
+        d.drift_until, d.drift_side = s.drift_until, s.drift_side
     room = s.room
     if room is None:
-        d.run = RUN_IDLE
+        d.mode = MODE_NEUTRAL
         return d
 
-    if s.run == RUN_HEATING:
-        can_stop = since_switch is None or since_switch >= min_run
-        if stop_heat is None or (room >= stop_heat and can_stop):
-            d.run = RUN_IDLE
-        else:
-            d.run = RUN_HEATING
-            if room >= stop_heat and s.last_switch is not None:
-                d.min_run_until = s.last_switch + min_run
-        return d
-    if s.run == RUN_COOLING:
-        can_stop = since_switch is None or since_switch >= min_run
-        if stop_cool is None or (room <= stop_cool and can_stop):
-            d.run = RUN_IDLE
-        else:
-            d.run = RUN_COOLING
-            if room <= stop_cool and s.last_switch is not None:
-                d.min_run_until = s.last_switch + min_run
-        return d
-
-    # Idle: start a run?
-    start = settings[CONF_START_OFFSET]
     hard_margin = settings[CONF_HARD_MARGIN]
-    d.heat_zone = low is not None and room <= low - start
-    d.cool_zone = high is not None and room >= high + start
     hard_cold = low is not None and room <= low - hard_margin
     hard_warm = high is not None and room >= high + hard_margin
+    gap = settings[CONF_SWITCH_GAP] * 60
+    since_mode = s.now - s.mode_since if s.mode_since is not None else None
+
+    def elapsed(seconds: float) -> bool:
+        return since_mode is None or since_mode >= seconds
+
+    idle_long = (
+        s.idle_since is not None
+        and s.now - s.idle_since >= settings[CONF_IDLE_EXIT] * 60
+    )
+
+    if s.mode == MODE_HEAT:
+        if low is None:  # the profile no longer heats
+            d.mode = MODE_NEUTRAL
+        elif hard_warm:
+            d.mode, d.reason = MODE_COOL, "hard"
+        elif (
+            settings[CONF_EARLY_EXIT]
+            and elapsed(gap)
+            and room >= low
+            and _warm_outside(
+                s.exit_forecast,
+                low,
+                settings[CONF_EXIT_WARMTH_MARGIN],
+                settings[CONF_EXIT_SUN],
+            )
+        ):
+            d.mode, d.early_exit = MODE_NEUTRAL, True
+            d.drift_until = s.now + settings[CONF_DRIFT_TIME] * 60
+            d.drift_side = MODE_HEAT
+        elif (
+            elapsed(settings[CONF_MIN_MODE_TIME] * 60)
+            and idle_long
+            and d.target_heat is not None
+            and room >= d.target_heat
+        ):
+            d.mode = MODE_NEUTRAL
+        return d
+
+    if s.mode == MODE_COOL:
+        if high is None:
+            d.mode = MODE_NEUTRAL
+        elif hard_cold:
+            d.mode, d.reason = MODE_HEAT, "hard"
+        elif (
+            settings[CONF_EARLY_EXIT]
+            and elapsed(gap)
+            and room <= high
+            and _cool_outside(s.exit_forecast, high, settings[CONF_EXIT_COOL_MARGIN])
+        ):
+            d.mode, d.early_exit = MODE_NEUTRAL, True
+            d.drift_until = s.now + settings[CONF_DRIFT_TIME] * 60
+            d.drift_side = MODE_COOL
+        elif (
+            elapsed(settings[CONF_MIN_MODE_TIME] * 60)
+            and idle_long
+            and d.target_cool is not None
+            and room <= d.target_cool
+        ):
+            d.mode = MODE_NEUTRAL
+        return d
+
+    # Neutral: start a mode?
+    drift_heat = d.drift_side == MODE_HEAT
+    drift_cool = d.drift_side == MODE_COOL
+    drift_ended_heat = s.drift_side == MODE_HEAT and not drift_heat
+    drift_ended_cool = s.drift_side == MODE_COOL and not drift_cool
+    start = settings[CONF_START_MARGIN]
+    drift_margin = settings[CONF_DRIFT_MARGIN]
+    if low is not None:
+        d.threshold_heat = low - drift_margin if drift_heat else low + start
+    if high is not None:
+        d.threshold_cool = high + drift_margin if drift_cool else high - start
+    d.heat_zone = d.threshold_heat is not None and room <= d.threshold_heat
+    d.cool_zone = d.threshold_cool is not None and room >= d.threshold_cool
 
     waited = (s.now - s.wait_since) / 60 if s.wait_since is not None else 0.0
-    fc = s.forecast
-    d.warmth_forecast = bool(
-        fc is not None
-        and low is not None
-        and (
-            (
-                fc.min_temp is not None
-                and fc.min_temp >= low + settings[CONF_WARMTH_MARGIN]
-            )
-            or (
-                fc.radiation is not None
-                and fc.radiation >= settings[CONF_SUN_THRESHOLD]
-            )
-        )
-    )
-    d.cool_forecast = bool(
-        fc is not None
-        and high is not None
-        and fc.max_temp is not None
-        and fc.max_temp <= high - settings[CONF_COOL_MARGIN]
-    )
     fast = settings[CONF_FAST_TREND]
     max_wait = settings[CONF_MAX_WAIT]
-    d.warmth_coming = d.warmth_forecast and s.trend > -fast and waited < max_wait
-    d.free_cooling = d.cool_forecast and s.trend < fast and waited < max_wait
-
-    since_cool = s.now - s.cool_ended if s.cool_ended is not None else None
-    since_heat = s.now - s.heat_ended if s.heat_ended is not None else None
-    heat_locked = since_cool is not None and since_cool < lockout
-    cool_locked = since_heat is not None and since_heat < lockout
-    can_start = since_switch is None or since_switch >= min_pause
-
-    need_heat = low is not None and (
-        hard_cold or (d.heat_zone and not d.warmth_coming and not heat_locked)
+    d.warmth_forecast = _warm_outside(
+        s.wait_forecast, low, settings[CONF_WARMTH_MARGIN], settings[CONF_SUN_THRESHOLD]
     )
-    need_cool = high is not None and (
-        hard_warm or (d.cool_zone and not d.free_cooling and not cool_locked)
+    d.cool_forecast = _cool_outside(s.wait_forecast, high, settings[CONF_COOL_MARGIN])
+    # While drifting after an early exit, the drift itself is the waiting;
+    # when it ends, the mode comes back without waiting again.
+    d.warmth_coming = (
+        not (drift_heat or drift_ended_heat)
+        and d.warmth_forecast
+        and s.trend > -fast
+        and waited < max_wait
     )
-    if can_start and need_heat:
-        d.run = RUN_HEATING
-        d.hard = hard_cold
-    elif can_start and need_cool:
-        d.run = RUN_COOLING
-        d.hard = hard_warm
-    else:
-        d.run = RUN_IDLE
+    d.free_cooling = (
+        not (drift_cool or drift_ended_cool)
+        and d.cool_forecast
+        and s.trend < fast
+        and waited < max_wait
+    )
 
-    d.waiting = d.run == RUN_IDLE and (d.heat_zone or d.cool_zone)
+    lockout = settings[CONF_LOCKOUT] * 3600
+    heat_locked = s.cool_ended is not None and s.now - s.cool_ended < lockout
+    cool_locked = s.heat_ended is not None and s.now - s.heat_ended < lockout
+    gap_ok = elapsed(gap)
+
+    if hard_cold:
+        d.mode, d.reason = MODE_HEAT, "hard"
+    elif hard_warm:
+        d.mode, d.reason = MODE_COOL, "hard"
+    elif d.heat_zone and not d.warmth_coming and not heat_locked and gap_ok:
+        d.mode = MODE_HEAT
+        d.reason = _start_reason(
+            d.warmth_forecast, s.trend <= -fast, waited, max_wait, drift_ended_heat
+        )
+    elif d.cool_zone and not d.free_cooling and not cool_locked and gap_ok:
+        d.mode = MODE_COOL
+        d.reason = _start_reason(
+            d.cool_forecast, s.trend >= fast, waited, max_wait, drift_ended_cool
+        )
+
+    d.waiting = d.mode == MODE_NEUTRAL and (d.heat_zone or d.cool_zone)
     if d.waiting:
         d.wait_since = s.wait_since if s.wait_since is not None else s.now
         d.waited = (s.now - d.wait_since) / 60
-        if not can_start and s.last_switch is not None:
-            d.min_pause_until = s.last_switch + min_pause
+        if not gap_ok and s.mode_since is not None:
+            d.gap_until = s.mode_since + gap
         if d.heat_zone and heat_locked:
             d.lockout_until = s.cool_ended + lockout
         elif d.cool_zone and cool_locked:
             d.lockout_until = s.heat_ended + lockout
-    else:
-        d.wait_since = None
-    # A run that starts now used up its waiting.
-    d.extra["waited_before_start"] = waited
     return d
+
+
+def _start_reason(
+    forecast: bool, fast: bool, waited: float, max_wait: float, drift_ended: bool
+) -> str:
+    if drift_ended:
+        return "drift_over"
+    if not forecast:
+        return "no_forecast"
+    if fast:
+        return "fast"
+    if waited >= max_wait:
+        return "waited"
+    return "near"
+
+
+def learn_step(
+    *,
+    heating: bool,
+    target: float,
+    room_now: float | None,
+    room: float | None,
+    room_long: float | None,
+    offset: float,
+    active: bool | None,
+    high_power: bool | None,
+    settings: dict,
+) -> float | None:
+    """New offset after one learning step, or None to leave it.
+
+    Heating: the AC gets target + offset. Too cold while the AC idles or runs
+    gently -> it stops too early -> raise. Too warm while it actively heats
+    -> it heats too much -> lower. Too warm while idle is its own cycling or
+    free warmth; too cold at high power is warm-up; both are not learned.
+    Cooling is mirrored (the AC gets target - offset). The current reading
+    (`room_now`) and the short average (`room`) must be off in the same
+    direction as the learning average (`room_long`); otherwise the room is
+    just changing and the averages lag behind.
+    """
+    if room_now is None or room is None or room_long is None or active is None:
+        return None
+
+    def err(value: float) -> float:
+        return target - value if heating else value - target
+
+    error = err(room_long)
+    deadband = settings[CONF_LEARN_DEADBAND]
+    errors = (error, err(room), err(room_now))
+    if any(abs(e) < deadband for e in errors):
+        return None
+    if len({e > 0 for e in errors}) > 1:
+        return None
+    if abs(error) > settings[CONF_LEARN_MAX_ERROR]:
+        return None
+    if error > 0 and high_power:
+        return None
+    if error < 0 and not active:
+        return None
+    step = settings[CONF_OFFSET_STEP]
+    delta = max(-step, min(step, settings[CONF_LEARN_GAIN] * error))
+    new = min(max(offset + delta, settings[CONF_OFFSET_MIN]), settings[CONF_OFFSET_MAX])
+    new = round(new, 2)
+    return None if new == offset else new
 
 
 def round_setpoint(value: float, step: float, lowest: float, highest: float) -> float:

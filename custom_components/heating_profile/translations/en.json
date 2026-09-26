@@ -75,8 +75,7 @@
           "unavailable": "Unavailable",
           "paused": "Paused",
           "off": "Off",
-          "away": "Away",
-          "idle": "Idle",
+          "neutral": "Neutral",
           "waiting": "Waiting",
           "heating": "Heating",
           "cooling": "Cooling"
@@ -148,63 +147,71 @@
         "data": {
           "room_sensor": "Room temperature sensor",
           "ac_entity": "Air conditioner",
+          "power_sensor": "AC power sensor",
           "compressor_sensor": "Compressor running sensor",
-          "presence_entity": "Presence",
           "use_forecast": "Use the weather forecast"
         },
         "data_description": {
           "room_sensor": "The control decides only on this sensor (averaged).",
           "ac_entity": "Climate entity of the AC that gets the commands.",
-          "compressor_sensor": "Optional. On while the compressor runs; used to raise the setpoint offset when the AC stops too early.",
-          "presence_entity": "Optional. On/home means present. While away for longer than the set time, the AC is switched off instead of idling.",
-          "use_forecast": "Hourly forecast from Open-Meteo for the Home Assistant location. Lets the control wait for sun, warmth or cooler outside air."
+          "power_sensor": "Shows whether the AC is working and how hard. Used to leave a mode when the AC idles, and for learning. This or the compressor sensor is required.",
+          "compressor_sensor": "On while the compressor runs. Used instead of the power sensor if that isn't set.",
+          "use_forecast": "Hourly forecast from Open-Meteo for the Home Assistant location. Lets the control wait for free warmth or cooling, and leave a mode early when it gets really warm or cool outside."
         }
       },
       "settings": {
         "title": "Climate control: settings",
-        "description": "All values can be changed later. Defaults are shown.",
+        "description": "The control picks heat, cool or neutral (fan) and only sets the AC's setpoint; the AC modulates by itself. All values can be changed later.",
         "sections": {
           "ac_modes": {
             "name": "AC modes",
-            "description": "What the AC is set to while no heating or cooling run is needed.",
+            "description": "What the AC is set to.",
             "data": {
-              "idle_hvac_mode": "Mode while idle",
-              "idle_fan_mode": "Fan while idle",
+              "idle_hvac_mode": "Mode while neutral",
+              "idle_fan_mode": "Fan while neutral",
               "active_fan_mode": "Fan while heating/cooling"
             },
             "data_description": {
               "idle_hvac_mode": "Usually fan only.",
-              "idle_fan_mode": "Fan mode while idle.",
-              "active_fan_mode": "Fan mode during heating and cooling runs."
+              "idle_fan_mode": "Fan mode while neutral.",
+              "active_fan_mode": "Fan mode in heat and cool mode."
             }
           },
-          "start_stop": {
-            "name": "Start and stop",
-            "description": "When heating and cooling runs start and stop.",
+          "targets": {
+            "name": "Targets",
+            "description": "What the room is held at.",
             "data": {
-              "start_offset": "Start beyond the limit",
+              "target_margin": "Target inside the range",
+              "start_margin": "Start near the limit",
               "hard_margin": "Hard limit",
-              "stop_position": "Stop point in the range",
-              "stop_past_target": "Stop past the target",
-              "min_run": "Minimum run time",
-              "min_pause": "Minimum pause",
-              "lockout": "Lockout between heating and cooling",
               "look_ahead": "Look ahead to the next period"
             },
             "data_description": {
-              "start_offset": "A run starts this far below the minimum (heating) or above the maximum (cooling).",
-              "hard_margin": "This far beyond the limit a run starts regardless of forecast and lockout.",
-              "stop_position": "Auto (range) mode: where in the range a run stops. 50 % is the middle, 0 % the limit it started from.",
-              "stop_past_target": "Heat or cool mode: a run stops this far past the target.",
-              "min_run": "A run lasts at least this long.",
-              "min_pause": "No new run starts within this time after the last change.",
-              "lockout": "After heating no cooling starts within this time, and the other way round (except at the hard limit).",
-              "look_ahead": "This long before a day/night switch the control already uses the next period's range: it skips heating or cooling the old range no longer needs and pre-heats or pre-cools for the new one. 0 turns it off."
+              "target_margin": "Heat mode holds the minimum plus this, cool mode the maximum minus this.",
+              "start_margin": "Neutral switches to heat mode at the minimum plus this (cool mode at the maximum minus this).",
+              "hard_margin": "This far beyond the minimum or maximum the mode switches right away, ignoring waiting, gaps and lockout.",
+              "look_ahead": "This long before a day/night switch the next period's range already applies (pre-heats/-cools, skips what the old range no longer needs). 0 turns it off."
+            }
+          },
+          "mode_changes": {
+            "name": "Mode changes",
+            "description": "How often heat, cool and neutral may change.",
+            "data": {
+              "min_mode_time": "Minimum time in heat/cool mode",
+              "idle_exit": "Back to neutral after the AC idled for",
+              "switch_gap": "Minimum time between neutral and heat/cool",
+              "lockout": "Lockout between heating and cooling"
+            },
+            "data_description": {
+              "min_mode_time": "Before the mode can end because the AC idles.",
+              "idle_exit": "In heat/cool mode: the AC didn't work for this long and the room is at the target.",
+              "switch_gap": "Both ways, except at the hard limit.",
+              "lockout": "After heat mode no cool mode starts within this time and the other way round (except at the hard limit)."
             }
           },
           "waiting": {
             "name": "Waiting for free warmth or cooling",
-            "description": "Uses the forecast for the next minutes up to the maximum waiting time.",
+            "description": "Before heat/cool mode starts. Uses the forecast for the next minutes up to the maximum waiting time.",
             "data": {
               "max_wait": "Maximum waiting time",
               "fast_trend": "Don't wait when changing this fast",
@@ -213,33 +220,65 @@
               "sun_threshold": "Sun: radiation from"
             },
             "data_description": {
-              "max_wait": "Longest time to wait instead of heating or cooling. Also the length of the forecast window.",
+              "max_wait": "Longest time to wait instead of starting. Also the length of the forecast window.",
               "fast_trend": "No waiting if the room moves this much per 30 min the wrong way.",
               "warmth_margin": "Wait instead of heating if it stays at least this much above the minimum outside the whole time.",
               "cool_margin": "Wait instead of cooling if it stays at least this much below the maximum outside the whole time.",
               "sun_threshold": "Wait instead of heating if the mean global radiation is at least this high."
             }
           },
-          "offsets": {
-            "name": "Setpoint offset",
-            "description": "The AC gets the stop point plus (heating) or minus (cooling) an offset, to make up for its own sensor.",
+          "early_exit": {
+            "name": "Early switch to neutral",
+            "description": "Leave heat/cool mode before the AC idles when it gets really warm or cool outside. Meant to be stricter than the waiting rules.",
             "data": {
-              "auto_tune": "Tune the offsets automatically",
-              "offset_max": "Largest offset",
-              "offset_step": "Tuning step",
-              "raise_idle": "Raise after compressor idle for",
-              "raise_margin": "Short of the stop point by more than",
-              "overshoot": "Lower after overshooting by more than",
-              "overshoot_window": "Overshoot checked within"
+              "early_exit": "Switch to neutral early",
+              "exit_warmth_margin": "Warm: outside above the minimum by",
+              "exit_cool_margin": "Cool: outside below the maximum by",
+              "exit_window": "Forecast window",
+              "exit_sun": "...or sun from",
+              "drift_margin": "Room may drift past the limit by",
+              "drift_time": "Drift at most"
             },
             "data_description": {
-              "auto_tune": "Raise when the compressor stops too early, lower after an overshoot.",
+              "early_exit": "Off: heat/cool mode only ends when the AC idles.",
+              "exit_warmth_margin": "Heat mode ends if it stays at least this much above the minimum outside for the whole forecast window...",
+              "exit_cool_margin": "Cool mode ends if it stays at least this much below the maximum outside for the whole forecast window.",
+              "exit_window": "How far ahead the outside temperature has to stay warm/cool.",
+              "exit_sun": "Heat mode also ends if the mean radiation over the window is at least this high.",
+              "drift_margin": "After an early switch the room may go this far below the minimum (above the maximum) before the mode starts again.",
+              "drift_time": "After this time the normal start point applies again."
+            }
+          },
+          "learning": {
+            "name": "Learning the setpoint offset",
+            "description": "The AC gets target + offset (heat) or target - offset (cool). The offset makes up for the AC's own sensor and is learned from the room sensor.",
+            "data": {
+              "auto_tune": "Learn the offsets",
+              "learn_interval": "Learning step every",
+              "learn_gain": "Correction per step",
+              "learn_deadband": "Ignore errors below",
+              "learn_max_error": "Learn only within",
+              "learn_settle": "Wait after a mode or target change",
+              "learn_average": "Room average for learning",
+              "offset_min": "Smallest offset",
+              "offset_max": "Largest offset",
+              "offset_step": "Largest change per step",
+              "active_power": "AC working from",
+              "high_power": "AC working hard from"
+            },
+            "data_description": {
+              "auto_tune": "Off: the offsets only change when set by hand.",
+              "learn_interval": "Minimum time between two changes of an offset.",
+              "learn_gain": "Share of the room's error that is corrected per step.",
+              "learn_deadband": "Smaller differences between room and target are not learned.",
+              "learn_max_error": "Bigger differences are warm-up or free warmth/cooling, not a wrong offset.",
+              "learn_settle": "No learning this long after a change.",
+              "learn_average": "Time the room temperature is averaged over for learning.",
+              "offset_min": "Lower limit of both offsets.",
               "offset_max": "Upper limit of both offsets.",
-              "offset_step": "Change per adjustment.",
-              "raise_idle": "During a run: the compressor stood still this long while the room is short of the stop point.",
-              "raise_margin": "How far the room must still be from the stop point.",
-              "overshoot": "How far the room went past the stop point after a run.",
-              "overshoot_window": "Time after a run in which the overshoot is measured."
+              "offset_step": "Also limits how fast the setpoint moves.",
+              "active_power": "Power at which the AC counts as heating or cooling (not idle).",
+              "high_power": "Power at which it counts as warm-up; too cold/warm is then not learned."
             }
           },
           "manual": {
@@ -254,16 +293,6 @@
               "command_grace": "The AC's reaction to a command of the control is not a manual change."
             }
           },
-          "presence": {
-            "name": "Presence",
-            "description": "Only used when a presence entity is set.",
-            "data": {
-              "away_after": "Switch the AC off after being away for"
-            },
-            "data_description": {
-              "away_after": "While idle and away for this long the AC is switched off instead of idling. Heating and cooling runs still happen."
-            }
-          },
           "measurement": {
             "name": "Measurement",
             "description": "How the room sensor is evaluated.",
@@ -272,7 +301,7 @@
               "trend_window": "Trend over"
             },
             "data_description": {
-              "average_window": "The control uses the room temperature averaged over this time.",
+              "average_window": "The mode decision uses the room temperature averaged over this time.",
               "trend_window": "Time over which the room's change is measured."
             }
           }
@@ -281,7 +310,9 @@
     },
     "error": {
       "control_incomplete": "Choose both a room temperature sensor and an air conditioner, or neither.",
-      "hard_below_start": "The hard limit must not be smaller than the start offset."
+      "activity_missing": "Choose an AC power sensor or a compressor running sensor.",
+      "offset_range": "The smallest offset must be below the largest.",
+      "power_thresholds": "'AC working hard from' must be above 'AC working from'."
     }
   }
 }

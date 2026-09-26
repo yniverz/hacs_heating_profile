@@ -13,7 +13,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import HeatingProfileConfigEntry
-from .const import CONF_OFFSET_MAX, CONF_OFFSET_STEP, MAX_TEMP, MIN_TEMP, TEMP_STEP
+from .const import CONF_OFFSET_MAX, CONF_OFFSET_MIN, MAX_TEMP, MIN_TEMP, TEMP_STEP
 from .entity import ControlEntity, HeatingProfileEntity
 
 # The key doubles as the attribute name on HeatingProfileData. The minimum
@@ -71,17 +71,22 @@ class HeatingProfileNumber(HeatingProfileEntity, NumberEntity):
 
 
 class OffsetNumber(ControlEntity, NumberEntity):
-    """How far past the stop point the AC's setpoint is set.
+    """Learned offset between the target and the AC's setpoint.
 
-    Makes up for the AC's own sensor; tunes itself unless automatic tuning is
-    off in the options, and can be set by hand.
+    Heating: the AC gets target + offset, cooling: target - offset. Makes up
+    for the AC's own sensor; learns by itself unless learning is off in the
+    options, and can be set by hand.
     """
 
     _attr_entity_category = EntityCategory.CONFIG
-    _attr_device_class = NumberDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-    _attr_native_min_value = 0.0
+    _attr_native_step = 0.1
     _attr_mode = NumberMode.BOX
+
+    @property
+    def native_min_value(self) -> float:
+        """Lower limit from the options."""
+        return float(self._controller.settings[CONF_OFFSET_MIN])
 
     @property
     def native_max_value(self) -> float:
@@ -89,19 +94,12 @@ class OffsetNumber(ControlEntity, NumberEntity):
         return float(self._controller.settings[CONF_OFFSET_MAX])
 
     @property
-    def native_step(self) -> float:
-        """Step from the options."""
-        return float(self._controller.settings[CONF_OFFSET_STEP])
-
-    @property
     def native_value(self) -> float:
         """Return the current offset."""
         state = self._controller.state
-        return (
-            state.offset_heat
-            if self.entity_description.key == "offset_heat"
-            else state.offset_cool
-        )
+        if self.entity_description.key == "offset_heat":
+            return state.offset_heat
+        return state.offset_cool
 
     async def async_set_native_value(self, value: float) -> None:
         """Set the offset by hand."""
