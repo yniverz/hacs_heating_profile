@@ -13,13 +13,23 @@ from homeassistant.components.climate import (
     ClimateEntityFeature,
     HVACMode,
 )
-from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.const import (
+    ATTR_TEMPERATURE,
+    ATTR_UNIT_OF_MEASUREMENT,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+    UnitOfTemperature,
+)
+from homeassistant.core import Event, EventStateChangedData, HomeAssistant, callback
 from homeassistant.helpers import config_validation as cv, entity_platform
 from homeassistant.helpers.entity import EntityDescription
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
-from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+    async_track_time_change,
+)
 from homeassistant.util import dt as dt_util
+from homeassistant.util.unit_conversion import TemperatureConverter
 import voluptuous as vol
 
 from . import HeatingProfileConfigEntry
@@ -97,12 +107,47 @@ class HeatingProfileClimate(HeatingProfileEntity, ClimateEntity):
     _attr_max_temp = MAX_TEMP
     _attr_target_temperature_step = TEMP_STEP
 
+    def __init__(
+        self, entry: HeatingProfileConfigEntry, description: EntityDescription
+    ) -> None:
+        """Initialize; the control's room sensor is the current temperature."""
+        super().__init__(entry, description)
+        controller = entry.runtime_data.controller
+        self._room_sensor = controller.room_sensor if controller else None
+
     async def async_added_to_hass(self) -> None:
         """Also re-evaluate at the start of every minute."""
         await super().async_added_to_hass()
         self.async_on_remove(
             async_track_time_change(self.hass, self._async_minute_tick, second=0)
         )
+        if self._room_sensor:
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass, [self._room_sensor], self._async_room_changed
+                )
+            )
+
+    @callback
+    def _async_room_changed(self, _event: Event[EventStateChangedData]) -> None:
+        self.async_write_ha_state()
+
+    @property
+    def current_temperature(self) -> float | None:
+        """The room sensor of the climate control, if one is set."""
+        if not self._room_sensor:
+            return None
+        state = self.hass.states.get(self._room_sensor)
+        if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return None
+        try:
+            value = float(state.state)
+        except ValueError:
+            return None
+        unit = state.attributes.get(ATTR_UNIT_OF_MEASUREMENT)
+        if unit in (UnitOfTemperature.FAHRENHEIT, UnitOfTemperature.KELVIN):
+            value = TemperatureConverter.convert(value, unit, UnitOfTemperature.CELSIUS)
+        return round(value, 2)
 
     @callback
     def _async_minute_tick(self, _now: datetime) -> None:

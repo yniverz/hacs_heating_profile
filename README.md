@@ -318,6 +318,7 @@ For a profile called `Living room`:
 | --- | --- |
 | `switch.living_room_climate_control` | control on/off (off: nothing is sent to the AC; room average, trend and forecast keep updating) |
 | `button.living_room_end_pause` | end a pause after a manual change |
+| `climate.living_room` | its current temperature is the room sensor |
 | `sensor.living_room_control_status` | what it does, e.g. `Heating mode – holding 21.3 °C`; only changes when the situation changes, live values are attributes |
 | `sensor.living_room_control_reason` | why the current heat/cool mode started; empty in neutral |
 | `sensor.living_room_control_state` | `disabled`, `unavailable`, `paused`, `off`, `neutral`, `waiting`, `heating`, `cooling` |

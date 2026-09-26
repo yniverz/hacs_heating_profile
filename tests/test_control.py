@@ -207,6 +207,23 @@ async def test_entities_and_initial_state(hass: HomeAssistant, control) -> None:
     assert sent(calls) == []  # AC already fan_only/silent
 
 
+async def test_climate_current_temperature_is_the_room_sensor(
+    hass: HomeAssistant, control
+) -> None:
+    """The profile's climate entity shows the room sensor as current temperature."""
+    assert hass.states.get(PROFILE).attributes["current_temperature"] == 23.0
+    hass.states.async_set(ROOM, "21.46", {"unit_of_measurement": "°C"})
+    await hass.async_block_till_done()
+    # Climate entities show tenths (Home Assistant rounds to the precision).
+    assert hass.states.get(PROFILE).attributes["current_temperature"] == 21.5
+    hass.states.async_set(ROOM, "71.6", {"unit_of_measurement": "°F"})
+    await hass.async_block_till_done()
+    assert hass.states.get(PROFILE).attributes["current_temperature"] == 22.0
+    hass.states.async_set(ROOM, "unavailable")
+    await hass.async_block_till_done()
+    assert hass.states.get(PROFILE).attributes["current_temperature"] is None
+
+
 async def test_profile_without_control_has_no_control_entities(
     hass: HomeAssistant, local_time
 ) -> None:
@@ -217,6 +234,7 @@ async def test_profile_without_control_has_no_control_entities(
     await hass.async_block_till_done()
     assert entry.runtime_data.controller is None
     assert hass.states.get(STATUS) is None and hass.states.get(SWITCH) is None
+    assert hass.states.get(PROFILE).attributes["current_temperature"] is None
 
 
 async def test_heat_mode_holds_the_target(
