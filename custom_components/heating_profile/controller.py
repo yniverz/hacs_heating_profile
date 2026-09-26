@@ -75,6 +75,7 @@ from .const import (
     CONF_PAUSE,
     CONF_POWER_SENSOR,
     CONF_ROOM_SENSOR,
+    CONF_STANDBY_FAN_MODE,
     CONF_TREND_WINDOW,
     CONF_USE_FORECAST,
     CONF_WARMTH_MARGIN,
@@ -85,6 +86,7 @@ from .const import (
     DEFAULT_IDLE_FAN_MODE,
     DEFAULT_IDLE_HVAC_MODE,
     DEFAULT_OFFSET,
+    DEFAULT_STANDBY_FAN_MODE,
     DOMAIN,
     FORECAST_INTERVAL_MINUTES,
     FORECAST_MAX_AGE_HOURS,
@@ -142,6 +144,7 @@ def control_settings(options: dict[str, Any]) -> dict[str, Any]:
             CONF_IDLE_HVAC_MODE: DEFAULT_IDLE_HVAC_MODE,
             CONF_IDLE_FAN_MODE: DEFAULT_IDLE_FAN_MODE,
             CONF_ACTIVE_FAN_MODE: DEFAULT_ACTIVE_FAN_MODE,
+            CONF_STANDBY_FAN_MODE: DEFAULT_STANDBY_FAN_MODE,
         }
     )
     settings.update({k: v for k, v in options.items() if v is not None})
@@ -346,6 +349,11 @@ class ClimateController:
                 hass, [self.room_sensor], self._async_room_changed
             ),
             async_track_state_change_event(hass, [self.ac], self._async_ac_changed),
+            async_track_state_change_event(
+                hass,
+                [e for e in (self.compressor, self.power_sensor) if e],
+                self._async_activity_changed,
+            ),
             async_track_time_interval(
                 hass,
                 self._async_tick,
@@ -421,6 +429,13 @@ class ClimateController:
     def _async_room_changed(self, event: Event[EventStateChangedData]) -> None:
         self._record_room(event.data["new_state"])
 
+    @callback
+    def _async_activity_changed(self, event: Event[EventStateChangedData]) -> None:
+        # Switch the fan mode right away when the compressor starts or stops.
+        old, new = event.data["old_state"], event.data["new_state"]
+        if self._running(old) != self._running(new):
+            self._schedule_evaluate()
+
     async def _async_tick(self, _now: datetime) -> None:
         await self.async_evaluate()
 
@@ -449,6 +464,30 @@ class ClimateController:
             ):
                 return comp.state == STATE_ON, None, None
         return None, None, None
+
+    def _running(self, changed: State | None = None) -> bool | None:
+        """Whether the compressor runs: compressor sensor first, then power.
+
+        `changed` replaces the current state of the sensor it belongs to.
+        """
+
+        def state(entity_id: str) -> State | None:
+            if changed is not None and changed.entity_id == entity_id:
+                return changed
+            return self.hass.states.get(entity_id)
+
+        if self.compressor:
+            comp = state(self.compressor)
+            if comp is not None and comp.state not in (
+                STATE_UNAVAILABLE,
+                STATE_UNKNOWN,
+            ):
+                return comp.state == STATE_ON
+        if self.power_sensor:
+            power = self._number(state(self.power_sensor))
+            if power is not None:
+                return power >= self.settings[CONF_ACTIVE_POWER]
+        return None
 
     # ----- user actions ----------------------------------------------------
 
@@ -683,12 +722,19 @@ class ClimateController:
         setpoint: float | None = None
         if self.profile.hvac_mode == HVAC_MODE_OFF:
             want = self._ac_tuple(HVAC_MODE_OFF, None, None)
-        elif d.mode == MODE_HEAT and target is not None:
-            setpoint = self._setpoint(target + st.offset_heat, attrs)
-            want = self._ac_tuple("heat", setpoint, s[CONF_ACTIVE_FAN_MODE])
-        elif d.mode == MODE_COOL and target is not None:
-            setpoint = self._setpoint(target - st.offset_cool, attrs)
-            want = self._ac_tuple("cool", setpoint, s[CONF_ACTIVE_FAN_MODE])
+        elif target is not None:
+            # The AC stops its fan with the compressor; keep the air moving.
+            fan = s[
+                CONF_STANDBY_FAN_MODE
+                if self._running() is False
+                else CONF_ACTIVE_FAN_MODE
+            ]
+            if d.mode == MODE_HEAT:
+                setpoint = self._setpoint(target + st.offset_heat, attrs)
+                want = self._ac_tuple("heat", setpoint, fan)
+            else:
+                setpoint = self._setpoint(target - st.offset_cool, attrs)
+                want = self._ac_tuple("cool", setpoint, fan)
         else:
             want = self._ac_tuple(s[CONF_IDLE_HVAC_MODE], None, s[CONF_IDLE_FAN_MODE])
         await self._async_send(want, ac_state)

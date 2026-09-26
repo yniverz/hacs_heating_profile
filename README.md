@@ -239,7 +239,7 @@ data:
 | Room temperature sensor | The control decides only on this sensor. Required. |
 | Air conditioner | Climate entity that gets the commands. Required. |
 | AC power sensor | Shows whether the AC works and how hard (leaving a mode, learning). This or the compressor sensor is required. |
-| Compressor running sensor | Used instead of the power sensor if that isn't set. |
+| Compressor running sensor | Used instead of the power sensor if that isn't set; for the fan mode it is used first. |
 | Use the weather forecast | Hourly Open-Meteo forecast for the Home Assistant location (no API key). |
 
 Leave room sensor and AC empty to turn the control off again; its entities
@@ -281,7 +281,11 @@ mode (e.g. fan only, silent).
   override) the next period's range applies: pre-heat/-cool for it, skip
   what the old range no longer needs.
 
-**2. Setpoint.** Heat mode holds minimum + 0.3 °C, cool mode maximum −
+**2. Setpoint and fan.** The fan runs *Fan while heating/cooling* (auto)
+while the compressor runs and *compressor off* (silent) while it doesn't, so
+the room air keeps moving. Whether it runs comes from the compressor sensor,
+or else the power sensor (below 50 W = off); the fan mode changes as soon as
+either sensor shows a change. Heat mode holds minimum + 0.3 °C, cool mode maximum −
 0.3 °C. The AC gets that target plus (heating) or minus (cooling) an
 **offset** that makes up for its own sensor (it sits in its own air stream).
 The offset is learned from the room sensor every 20 min: raised when the room
@@ -314,6 +318,12 @@ For a profile called `Living room`:
 | diagnostic sensors (disabled by default) | room average, room trend, forecast outside minimum/maximum and radiation for the next waiting window, AC setpoint, waiting until, paused until |
 
 ## Upgrading
+
+### From 0.7.x
+
+New setting *Fan while heating/cooling, compressor off* (default silent):
+in heat and cool mode the fan now switches to it while the compressor is
+off, and back to *Fan while heating/cooling* when it runs.
 
 ### From 0.7.0
 

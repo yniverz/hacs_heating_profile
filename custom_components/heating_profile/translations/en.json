@@ -155,7 +155,7 @@
           "room_sensor": "The control decides only on this sensor (averaged).",
           "ac_entity": "Climate entity of the AC that gets the commands.",
           "power_sensor": "Shows whether the AC is working and how hard. Used to leave a mode when the AC idles, and for learning. This or the compressor sensor is required.",
-          "compressor_sensor": "On while the compressor runs. Used instead of the power sensor if that isn't set.",
+          "compressor_sensor": "On while the compressor runs. Used instead of the power sensor if that isn't set; for the fan mode it is used first.",
           "use_forecast": "Hourly forecast from Open-Meteo for the Home Assistant location. Lets the control wait for free warmth or cooling, and leave a mode early when it gets really warm or cool outside."
         }
       },
@@ -169,12 +169,14 @@
             "data": {
               "idle_hvac_mode": "Mode while neutral",
               "idle_fan_mode": "Fan while neutral",
-              "active_fan_mode": "Fan while heating/cooling"
+              "active_fan_mode": "Fan while heating/cooling",
+              "standby_fan_mode": "Fan while heating/cooling, compressor off"
             },
             "data_description": {
               "idle_hvac_mode": "Usually fan only.",
               "idle_fan_mode": "Fan mode while neutral.",
-              "active_fan_mode": "Fan mode in heat and cool mode."
+              "active_fan_mode": "Fan mode in heat and cool mode while the compressor runs.",
+              "standby_fan_mode": "Fan mode in heat and cool mode while the compressor is off, so the air keeps moving. Taken from the compressor sensor, or else the power sensor below \"AC working from\" (learning section)."
             }
           },
           "targets": {

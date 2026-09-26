@@ -71,6 +71,7 @@ SOURCE_KEYS = (CONF_ROOM_SENSOR, CONF_AC, CONF_POWER_SENSOR, CONF_COMPRESSOR)
 CONF_IDLE_HVAC_MODE = "idle_hvac_mode"
 CONF_IDLE_FAN_MODE = "idle_fan_mode"
 CONF_ACTIVE_FAN_MODE = "active_fan_mode"
+CONF_STANDBY_FAN_MODE = "standby_fan_mode"
 
 # Targets
 CONF_TARGET_MARGIN = "target_margin"
@@ -165,6 +166,7 @@ CONTROL_DEFAULTS: dict[str, float | bool] = {
 DEFAULT_IDLE_HVAC_MODE = "fan_only"
 DEFAULT_IDLE_FAN_MODE = "silent"
 DEFAULT_ACTIVE_FAN_MODE = "auto"
+DEFAULT_STANDBY_FAN_MODE = "silent"
 DEFAULT_OFFSET = 2.0
 
 # Control states (sensor "Control state")

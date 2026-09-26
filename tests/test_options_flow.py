@@ -63,7 +63,7 @@ def test_every_setting_has_a_default_label_and_description() -> None:
     """Sections, defaults, number ranges and translations fit together."""
     keys = [k for keys in SECTIONS.values() for k in keys]
     assert len(keys) == len(set(keys))
-    modes = {"idle_hvac_mode", "idle_fan_mode", "active_fan_mode"}
+    modes = {"idle_hvac_mode", "idle_fan_mode", "active_fan_mode", "standby_fan_mode"}
     assert set(keys) - modes == set(CONTROL_DEFAULTS) - {"use_forecast"}
     for key, value in CONTROL_DEFAULTS.items():
         if key in NUMBERS:
@@ -102,6 +102,7 @@ async def test_full_flow_sets_up_control(hass: HomeAssistant, local_time) -> Non
     assert defaults["idle_hvac_mode"] == "fan_only"
     assert defaults["idle_fan_mode"] == "silent"
     assert defaults["active_fan_mode"] == "auto"
+    assert defaults["standby_fan_mode"] == "silent"
     # Idle modes offered: the AC's modes without off/heat/cool.
     ac_sec = schema[next(k for k in schema if str(k) == "ac_modes")]
     idle_key = next(k for k in ac_sec.schema.schema if str(k) == "idle_hvac_mode")

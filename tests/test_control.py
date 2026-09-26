@@ -161,10 +161,15 @@ async def start_heating(hass: HomeAssistant, freezer, calls) -> None:
     assert sent(calls) == [
         ("set_hvac_mode", {"hvac_mode": "heat"}),
         ("set_temperature", {"temperature": 23.5}),  # 21.3 + 2 -> 23.5
-        ("set_fan_mode", {"fan_mode": "auto"}),
+        ("set_fan_mode", {"fan_mode": "silent"}),  # compressor not running yet
     ]
-    set_ac(hass, "heat", 23.5, "auto")
+    set_ac(hass, "heat", 23.5, "silent")
+    # The compressor starts: fan mode right away.
     set_power(hass, 250)
+    hass.states.async_set(COMP, "on")
+    await hass.async_block_till_done()
+    assert sent(calls) == [("set_fan_mode", {"fan_mode": "auto"})]
+    set_ac(hass, "heat", 23.5, "auto")
     await hass.async_block_till_done()
 
 
@@ -271,7 +276,10 @@ async def test_idle_exit(hass: HomeAssistant, freezer, control) -> None:
     set_power(hass, 140)
     await advance(hass, freezer, 70)
     set_power(hass, 5)  # AC idles from here
-    await advance(hass, freezer, 60)
+    await hass.async_block_till_done()
+    assert sent(calls) == [("set_fan_mode", {"fan_mode": "silent"})]
+    set_ac(hass, "heat", 23.5, "silent")
+    await advance(hass, freezer, 59)
     assert st(hass, STATE) == "heating"  # idle 59 min
     await advance(hass, freezer, 2)
     assert st(hass, STATE) == "neutral"
@@ -329,7 +337,7 @@ async def test_learning_raises_and_lowers_the_offset(
     assert c.state.offset_heat == pytest.approx(2.6)
     # Too warm while working: lowered, one step per 20 min.
     set_power(hass, 140)
-    await advance(hass, freezer, 1)
+    await hass.async_block_till_done()
     assert c.state.offset_heat == pytest.approx(2.3)
     await advance(hass, freezer, 19)
     assert c.state.offset_heat == pytest.approx(2.3)
@@ -482,8 +490,12 @@ async def test_cool_mode(hass: HomeAssistant, freezer, control) -> None:
     assert sent(calls) == [
         ("set_hvac_mode", {"hvac_mode": "cool"}),
         ("set_temperature", {"temperature": 22.5}),  # 24.7 - 2 = 22.7 -> 22.5
-        ("set_fan_mode", {"fan_mode": "auto"}),
+        ("set_fan_mode", {"fan_mode": "silent"}),  # compressor not running yet
     ]
+    set_ac(hass, "cool", 22.5, "silent")
+    set_power(hass, 250)
+    await hass.async_block_till_done()
+    assert sent(calls) == [("set_fan_mode", {"fan_mode": "auto"})]
     assert st(hass, STATUS) == "Cooling mode – holding 24.7 °C"
     assert st(hass, REASON) == (
         "Near maximum (24.9 °C, maximum 25.0 °C), no cooler outside air expected"
@@ -668,12 +680,59 @@ async def test_compressor_sensor_instead_of_power(
     )
     await start_heating(hass, freezer, calls)
     hass.states.async_set(ROOM, "21.5")
-    hass.states.async_set(COMP, "on")
     await advance(hass, freezer, 125)
     assert st(hass, STATE) == "heating"
     hass.states.async_set(COMP, "off")
+    await hass.async_block_till_done()
+    assert sent(calls) == [("set_fan_mode", {"fan_mode": "silent"})]
+    set_ac(hass, "heat", 23.5, "silent")
     await advance(hass, freezer, 62)
     assert st(hass, STATE) == "neutral"
+
+
+async def test_fan_follows_the_compressor(
+    hass: HomeAssistant, local_time, freezer
+) -> None:
+    """Compressor sensor first, then power; unknown -> the running fan mode."""
+    entry, calls = await setup_control(
+        hass,
+        local_time,
+        freezer,
+        {**OPTIONS, "compressor_sensor": COMP},
+    )
+    await start_heating(hass, freezer, calls)
+    # The compressor sensor wins over the power sensor.
+    hass.states.async_set(COMP, "off")
+    await hass.async_block_till_done()
+    assert sent(calls) == [("set_fan_mode", {"fan_mode": "silent"})]
+    set_ac(hass, "heat", 23.5, "silent")
+    # Power changes don't matter while the compressor sensor is known.
+    set_power(hass, 5)
+    await advance(hass, freezer, 2)
+    set_power(hass, 300)
+    await advance(hass, freezer, 2)
+    assert sent(calls) == []
+    # Compressor sensor unavailable: the power sensor decides.
+    hass.states.async_set(COMP, "unavailable")
+    await hass.async_block_till_done()
+    assert sent(calls) == [("set_fan_mode", {"fan_mode": "auto"})]
+    set_ac(hass, "heat", 23.5, "auto")
+    set_power(hass, 20)
+    await hass.async_block_till_done()
+    assert sent(calls) == [("set_fan_mode", {"fan_mode": "silent"})]
+    set_ac(hass, "heat", 23.5, "silent")
+    # Neither known: the running fan mode.
+    hass.states.async_set(POWER, "unknown")
+    await hass.async_block_till_done()
+    await advance(hass, freezer, 1)
+    assert sent(calls) == [("set_fan_mode", {"fan_mode": "auto"})]
+    assert st(hass, STATE) == "heating"
+    # The configured mode is used.
+    set_ac(hass, "heat", 23.5, "auto")
+    controller(entry).settings["standby_fan_mode"] = "low"
+    hass.states.async_set(COMP, "off")
+    await hass.async_block_till_done()
+    assert sent(calls) == [("set_fan_mode", {"fan_mode": "low"})]
 
 
 async def test_state_survives_reload(hass: HomeAssistant, freezer, control) -> None:

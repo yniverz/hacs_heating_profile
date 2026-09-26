@@ -55,6 +55,7 @@ from .const import (
     CONF_PAUSE,
     CONF_POWER_SENSOR,
     CONF_ROOM_SENSOR,
+    CONF_STANDBY_FAN_MODE,
     CONF_START_MARGIN,
     CONF_SUN_THRESHOLD,
     CONF_SWITCH_GAP,
@@ -67,6 +68,7 @@ from .const import (
     DEFAULT_IDLE_FAN_MODE,
     DEFAULT_IDLE_HVAC_MODE,
     DEFAULT_NAME,
+    DEFAULT_STANDBY_FAN_MODE,
     DOMAIN,
     SOURCE_KEYS,
 )
@@ -111,7 +113,12 @@ NUMBERS: dict[str, tuple[float, float, float, str]] = {
 BOOLEANS = (CONF_EARLY_EXIT, CONF_AUTO_TUNE)
 
 SECTIONS: dict[str, tuple[str, ...]] = {
-    "ac_modes": (CONF_IDLE_HVAC_MODE, CONF_IDLE_FAN_MODE, CONF_ACTIVE_FAN_MODE),
+    "ac_modes": (
+        CONF_IDLE_HVAC_MODE,
+        CONF_IDLE_FAN_MODE,
+        CONF_ACTIVE_FAN_MODE,
+        CONF_STANDBY_FAN_MODE,
+    ),
     "targets": (
         CONF_TARGET_MARGIN,
         CONF_START_MARGIN,
@@ -280,6 +287,7 @@ class HeatingProfileOptionsFlow(OptionsFlow):
             CONF_IDLE_HVAC_MODE: DEFAULT_IDLE_HVAC_MODE,
             CONF_IDLE_FAN_MODE: DEFAULT_IDLE_FAN_MODE,
             CONF_ACTIVE_FAN_MODE: DEFAULT_ACTIVE_FAN_MODE,
+            CONF_STANDBY_FAN_MODE: DEFAULT_STANDBY_FAN_MODE,
             **CONTROL_DEFAULTS,
             **self.config_entry.options,
         }
@@ -312,7 +320,7 @@ class HeatingProfileOptionsFlow(OptionsFlow):
             marker = vol.Required(key, default=current.get(key))
             if key == CONF_IDLE_HVAC_MODE:
                 return marker, _select(idle_modes)
-            if key in (CONF_IDLE_FAN_MODE, CONF_ACTIVE_FAN_MODE):
+            if key in (CONF_IDLE_FAN_MODE, CONF_ACTIVE_FAN_MODE, CONF_STANDBY_FAN_MODE):
                 return marker, _select(fan_modes)
             if key in BOOLEANS:
                 return marker, selector.BooleanSelector()
