@@ -25,6 +25,7 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.heating_profile.const import DOMAIN
 from custom_components.heating_profile.control import ForecastWindow
+from custom_components.heating_profile.controller import ControlState
 
 ROOM = "sensor.room"
 AC = "climate.ac"
@@ -1037,3 +1038,105 @@ async def test_fan_speed_sensor_waits_for_the_fan_to_stop(
     await hass.async_block_till_done()
     assert sent(calls) == [("set_fan_mode", {"fan_mode": "silent"})]
     assert controller(entry).state.standby_fan
+
+
+async def test_anti_short_cycle(hass: HomeAssistant, freezer, control) -> None:
+    """Long runs (room + margin) and rests (lowest setpoint), minimum times."""
+    entry, calls = control
+    c = controller(entry)
+    cycle_switch = "switch.living_room_anti_short_cycle"
+    await hass.services.async_call(
+        "switch", "turn_on", {ATTR_ENTITY_ID: cycle_switch}, blocking=True
+    )
+    await hass.async_block_till_done()
+    assert st(hass, cycle_switch) == "on" and c.state.anti_short_cycle
+    # Heat mode starts with a run: 5-min average 21.0 + 5 = 26.0.
+    hass.states.async_set(ROOM, "21.0")
+    await advance(hass, freezer, 10)
+    assert st(hass, STATE) == "heating" and c.state.phase == "run"
+    assert sent(calls) == [
+        ("set_hvac_mode", {"hvac_mode": "heat"}),
+        ("set_temperature", {"temperature": 26.0}),
+        ("set_fan_mode", {"fan_mode": "silent"}),
+    ]
+    run_start = c.state.phase_since
+    assert st(hass, STATUS) == (
+        f"Heating – running until 21.8 °C (at least until {hm(run_start + 1200)})"
+    )
+    set_ac(hass, "heat", 26.0, "silent")
+    set_power(hass, 600)
+    await hass.async_block_till_done()
+    assert sent(calls) == [("set_fan_mode", {"fan_mode": "auto"})]
+    set_ac(hass, "heat", 26.0, "auto")
+    # The room warms: the setpoint follows, but never back down in a run.
+    hass.states.async_set(ROOM, "21.5")
+    await advance(hass, freezer, 5)
+    assert sent(calls) == [("set_temperature", {"temperature": 26.5})]
+    set_ac(hass, "heat", 26.5, "auto")
+    hass.states.async_set(ROOM, "21.3")
+    await advance(hass, freezer, 5)
+    assert sent(calls) == []
+    # Past the stop point, but the run lasts at least 20 min.
+    hass.states.async_set(ROOM, "22.0")
+    await advance(hass, freezer, 9)
+    assert c.state.phase == "run"  # 5-min average 22.0, but run only 19 min
+    assert dt_util.utcnow().timestamp() - run_start == 19 * 60
+    await advance(hass, freezer, 1)
+    assert c.state.phase == "rest"
+    assert sent(calls) == [
+        ("set_temperature", {"temperature": 27.0}),  # followed the room
+        ("set_temperature", {"temperature": 16.0}),  # rest: the AC's lowest
+    ]
+    set_ac(hass, "heat", 16.0, "auto")
+    rest_start = c.state.phase_since
+    assert st(hass, STATUS) == (
+        f"Heating – resting, runs again at 21.1 °C (not before {hm(rest_start + 900)})"
+    )
+    set_power(hass, 5)  # the compressor stops: standby fan
+    await hass.async_block_till_done()
+    assert sent(calls) == [("set_fan_mode", {"fan_mode": "silent"})]
+    set_ac(hass, "heat", 16.0, "silent")
+    # Back at the start point, but the rest lasts at least 15 min.
+    hass.states.async_set(ROOM, "21.0")
+    await advance(hass, freezer, 14)
+    assert c.state.phase == "rest" and sent(calls) == []
+    await advance(hass, freezer, 1)
+    assert c.state.phase == "run"
+    assert sent(calls) == [("set_temperature", {"temperature": 26.0})]
+    set_ac(hass, "heat", 26.0, "silent")
+    # Nothing was learned meanwhile.
+    assert c.state.offset_heat == 2.0
+    assert hass.states.get(STATUS).attributes["cycle_phase"] == "run"
+    # Switched off: the AC holds target + offset again.
+    await hass.services.async_call(
+        "switch", "turn_off", {ATTR_ENTITY_ID: cycle_switch}, blocking=True
+    )
+    await hass.async_block_till_done()
+    assert c.state.phase is None
+    assert sent(calls) == [("set_temperature", {"temperature": 23.5})]
+    assert st(hass, STATUS) == "Heating mode – holding 21.3 °C"
+
+
+async def test_anti_short_cycle_cooling_and_reset(
+    hass: HomeAssistant, freezer, control
+) -> None:
+    """Cooling: room - margin, rest at the highest setpoint; neutral resets."""
+    entry, calls = control
+    c = controller(entry)
+    await c.async_set_anti_short_cycle(True)
+    hass.states.async_set(ROOM, "24.9")
+    await advance(hass, freezer, 12)
+    assert st(hass, STATE) == "cooling" and c.state.phase == "run"
+    assert ("set_temperature", {"temperature": 20.0}) in sent(calls)  # 24.9 - 5
+    set_ac(hass, "cool", 20.0, "silent")
+    hass.states.async_set(ROOM, "24.0")
+    await advance(hass, freezer, 25)
+    assert c.state.phase == "rest"
+    assert ("set_temperature", {"temperature": 30.0}) in sent(calls)
+    assert st(hass, STATUS).startswith("Cooling – resting, runs again at 24.9 °C")
+    # The mode ends (idle for an hour after 2 h): the cycle starts over later.
+    set_ac(hass, "cool", 30.0, "silent")
+    await advance(hass, freezer, 150)
+    assert st(hass, STATE) == "neutral" and c.state.phase is None
+    stored = ControlState.from_dict(c.state.__dict__)
+    assert stored.anti_short_cycle and stored.phase is None

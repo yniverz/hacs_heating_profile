@@ -26,6 +26,11 @@ from .const import (
     CONF_COMMAND_GRACE,
     CONF_COMPRESSOR,
     CONF_COOL_MARGIN,
+    CONF_CYCLE_AVERAGE,
+    CONF_CYCLE_MIN_REST,
+    CONF_CYCLE_MIN_RUN,
+    CONF_CYCLE_RUN_MARGIN,
+    CONF_CYCLE_STOP_MARGIN,
     CONF_DRIFT_MARGIN,
     CONF_DRIFT_TIME,
     CONF_EARLY_EXIT,
@@ -106,6 +111,11 @@ NUMBERS: dict[str, tuple[float, float, float, str]] = {
     CONF_OFFSET_STEP: (0.1, 2.0, 0.1, "°C"),
     CONF_ACTIVE_POWER: (1, 2000, 5, "W"),
     CONF_HIGH_POWER: (1, 5000, 10, "W"),
+    CONF_CYCLE_STOP_MARGIN: (0.2, 5.0, 0.1, "°C"),
+    CONF_CYCLE_MIN_RUN: (0, 120, 5, "min"),
+    CONF_CYCLE_MIN_REST: (0, 120, 5, "min"),
+    CONF_CYCLE_RUN_MARGIN: (0.0, 15.0, 0.5, "°C"),
+    CONF_CYCLE_AVERAGE: (1, 30, 1, "min"),
     CONF_PAUSE: (0, 1440, 5, "min"),
     CONF_COMMAND_GRACE: (10, 600, 5, "s"),
     CONF_AVERAGE_WINDOW: (1, 60, 1, "min"),
@@ -156,6 +166,13 @@ SECTIONS: dict[str, tuple[str, ...]] = {
         CONF_OFFSET_STEP,
         CONF_ACTIVE_POWER,
         CONF_HIGH_POWER,
+    ),
+    "anti_short_cycle": (
+        CONF_CYCLE_STOP_MARGIN,
+        CONF_CYCLE_MIN_RUN,
+        CONF_CYCLE_MIN_REST,
+        CONF_CYCLE_RUN_MARGIN,
+        CONF_CYCLE_AVERAGE,
     ),
     "manual": (CONF_PAUSE, CONF_COMMAND_GRACE),
     "measurement": (CONF_AVERAGE_WINDOW, CONF_TREND_WINDOW),
@@ -304,6 +321,8 @@ class HeatingProfileOptionsFlow(OptionsFlow):
                 errors["base"] = "offset_range"
             elif flat[CONF_ACTIVE_POWER] >= flat[CONF_HIGH_POWER]:
                 errors["base"] = "power_thresholds"
+            elif flat[CONF_CYCLE_STOP_MARGIN] <= flat[CONF_START_MARGIN]:
+                errors["base"] = "cycle_margins"
             else:
                 return self.async_create_entry(data={**flat, **self._sources})
             current = {**current, **flat}

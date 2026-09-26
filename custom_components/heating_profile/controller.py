@@ -61,6 +61,10 @@ from .const import (
     CONF_COMMAND_GRACE,
     CONF_COMPRESSOR,
     CONF_COOL_MARGIN,
+    CONF_CYCLE_AVERAGE,
+    CONF_CYCLE_MIN_REST,
+    CONF_CYCLE_MIN_RUN,
+    CONF_CYCLE_RUN_MARGIN,
     CONF_DRIFT_TIME,
     CONF_EXIT_WINDOW,
     CONF_FAN_SPEED,
@@ -97,6 +101,8 @@ from .const import (
     MODE_HEAT,
     MODE_NEUTRAL,
     MODES,
+    PHASE_REST,
+    PHASE_RUN,
     RESEND_INTERVAL_SECONDS,
     SAVE_DELAY,
     STATE_COOLING,
@@ -114,6 +120,8 @@ from .control import (
     ForecastWindow,
     RoomHistory,
     Situation,
+    cycle_limits,
+    cycle_phase,
     decide,
     forecast_window,
     learn_step,
@@ -185,6 +193,12 @@ class ControlState:
     reason_since: float | None = None
     # Heat/cool: the fan mode for a stopped compressor is in use.
     standby_fan: bool = False
+    # Anti short cycle: switched on, current phase (run/rest) and the
+    # setpoint of the current run (it only moves toward more heating/cooling).
+    anti_short_cycle: bool = False
+    phase: str | None = None
+    phase_since: float | None = None
+    run_setpoint: float | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ControlState:
@@ -202,6 +216,8 @@ class ControlState:
             state.mode = MODE_NEUTRAL
         if state.drift_side not in (None, "heat", "cool"):
             state.drift_side = None
+        if state.phase not in (None, PHASE_RUN, PHASE_REST):
+            state.phase = None
         cmd = state.last_command
         if not (isinstance(cmd, dict) and {"mode", "temp", "fan"} <= cmd.keys()):
             state.last_command = None
@@ -218,6 +234,8 @@ class ControlState:
             "last_target",
             "target_changed_at",
             "reason_since",
+            "phase_since",
+            "run_setpoint",
         ):
             if not isinstance(getattr(state, key), (int, float, type(None))):
                 setattr(state, key, None)
@@ -509,6 +527,17 @@ class ClimateController:
         self._save()
         await self.async_evaluate()
 
+    async def async_set_anti_short_cycle(self, on: bool) -> None:
+        """Switch the anti short cycle on/off."""
+        self.state.anti_short_cycle = on
+        self._reset_cycle()
+        self._save()
+        await self.async_evaluate()
+
+    def _reset_cycle(self) -> None:
+        st = self.state
+        st.phase = st.phase_since = st.run_setpoint = None
+
     async def async_end_pause(self) -> None:
         """End a pause after a manual change right away."""
         self.state.pause_until = None
@@ -717,7 +746,8 @@ class ClimateController:
         )
         if target != st.last_target:
             st.last_target, st.target_changed_at = target, now
-        if target is not None:
+        # With the anti short cycle the AC doesn't hold a setpoint: no learning.
+        if target is not None and not st.anti_short_cycle:
             self._learn(
                 d.mode == MODE_HEAT,
                 target,
@@ -741,16 +771,21 @@ class ClimateController:
             elif self._fan_stopped():
                 st.standby_fan = True
             fan = s[CONF_STANDBY_FAN_MODE if st.standby_fan else CONF_ACTIVE_FAN_MODE]
-            if d.mode == MODE_HEAT:
+            heating = d.mode == MODE_HEAT
+            if st.anti_short_cycle:
+                setpoint = self._cycle_setpoint(heating, d, room, attrs, now)
+            elif heating:
                 setpoint = self._setpoint(target + st.offset_heat, attrs)
-                want = self._ac_tuple("heat", setpoint, fan)
             else:
                 setpoint = self._setpoint(target - st.offset_cool, attrs)
-                want = self._ac_tuple("cool", setpoint, fan)
+            want = self._ac_tuple("heat" if heating else "cool", setpoint, fan)
         else:
             want = self._ac_tuple(s[CONF_IDLE_HVAC_MODE], None, s[CONF_IDLE_FAN_MODE])
         if target is None or self.profile.hvac_mode == HVAC_MODE_OFF:
             st.standby_fan = False
+            self._reset_cycle()
+        elif not st.anti_short_cycle:
+            self._reset_cycle()
         await self._async_send(want, ac_state)
 
         self.view = self._build_view(
@@ -785,6 +820,7 @@ class ClimateController:
         st.mode_since = now
         st.idle_since = None
         st.standby_fan = False
+        self._reset_cycle()
 
     def _learn(
         self,
@@ -835,6 +871,47 @@ class ClimateController:
             offset,
             new,
         )
+
+    def _cycle_setpoint(
+        self,
+        heating: bool,
+        d: Decision,
+        room: float | None,
+        attrs: dict[str, Any],
+        now: float,
+    ) -> float:
+        """Setpoint with the anti short cycle: run or rest, decided on the
+        room sensor. A run gets the room +/- the run margin, so the AC keeps
+        its compressor on; a rest the AC's lowest (cooling: highest) setpoint,
+        so it stays off."""
+        st, s = self.state, self.settings
+        short = self.history.mean(now, s[CONF_CYCLE_AVERAGE] * 60)
+        value = short if short is not None else room
+        assert value is not None  # no room reading: neutral, no target
+        phase = cycle_phase(
+            heating=heating,
+            phase=st.phase,
+            phase_since=st.phase_since,
+            now=now,
+            room=value,
+            low=d.low,
+            high=d.high,
+            settings=s,
+        )
+        if phase != st.phase:
+            _LOGGER.debug("Anti short cycle: %s -> %s", st.phase, phase)
+            st.phase, st.phase_since, st.run_setpoint = phase, now, None
+        if phase == PHASE_REST:
+            return self._setpoint(-100.0 if heating else 100.0, attrs)
+        margin = s[CONF_CYCLE_RUN_MARGIN]
+        setpoint = self._setpoint(value + margin if heating else value - margin, attrs)
+        # Only toward more heating/cooling within a run: a lower setpoint
+        # could make the AC stop its compressor.
+        if st.run_setpoint is not None:
+            pick = max if heating else min
+            setpoint = pick(setpoint, st.run_setpoint)
+        st.run_setpoint = setpoint
+        return setpoint
 
     def _setpoint(self, value: float, attrs: dict[str, Any]) -> float:
         def num(key: str, default: float) -> float:
@@ -943,6 +1020,27 @@ class ClimateController:
             return f"{base}, {free} didn't come within {s[CONF_DRIFT_TIME]:g} min"
         return base
 
+    def _cycle_text(self, heating: bool, d: Decision) -> str:
+        st, s = self.state, self.settings
+        start, stop = cycle_limits(
+            heating,
+            d.low if d.low is not None else 0.0,
+            d.high if d.high is not None else 0.0,
+            s,
+        )
+        assert st.phase_since is not None
+        if st.phase == PHASE_RUN:
+            text = f"running until {_t(stop)} °C"
+            until = st.phase_since + s[CONF_CYCLE_MIN_RUN] * 60
+            extra = "at least until"
+        else:
+            text = f"resting, runs again at {_t(start)} °C"
+            until = st.phase_since + s[CONF_CYCLE_MIN_REST] * 60
+            extra = "not before"
+        if dt_util.utcnow().timestamp() < until:
+            text += f" ({extra} {_hm(until)})"
+        return text
+
     def _build_view(
         self,
         d: Decision,
@@ -968,6 +1066,13 @@ class ClimateController:
         elif room is None:
             state = CONTROL_UNAVAILABLE
             status = f"Room sensor unavailable – {idle_label}"
+        elif d.mode in (MODE_HEAT, MODE_COOL) and st.phase is not None:
+            heating = d.mode == MODE_HEAT
+            state = STATE_HEATING if heating else STATE_COOLING
+            status = f"{'Heating' if heating else 'Cooling'} – " + self._cycle_text(
+                heating, d
+            )
+            status += note
         elif d.mode == MODE_HEAT:
             state = STATE_HEATING
             status = f"Heating mode – holding {_t(target)} °C{note}"
@@ -1044,6 +1149,8 @@ class ClimateController:
             "warmth_coming": d.warmth_coming,
             "free_cooling": d.free_cooling,
             "look_ahead": ahead,
+            "anti_short_cycle": st.anti_short_cycle,
+            "cycle_phase": st.phase,
         }
         return ControlView(
             state=state,

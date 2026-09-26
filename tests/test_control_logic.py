@@ -8,6 +8,8 @@ from custom_components.heating_profile.control import (
     ForecastWindow,
     RoomHistory,
     Situation,
+    cycle_limits,
+    cycle_phase,
     decide,
     forecast_window,
     learn_step,
@@ -313,3 +315,58 @@ def test_learning() -> None:
     assert learn(**cool, room_now=24.2, room=24.2, room_long=24.2) == pytest.approx(
         1.75
     )
+
+
+def test_anti_short_cycle_phases() -> None:
+    """Runs to min + 0.8, rests until min + 0.1; minimum times; overrides."""
+    assert cycle_limits(True, 21.0, 25.0, S) == pytest.approx((21.1, 21.8))
+    assert cycle_limits(False, 21.0, 25.0, S) == pytest.approx((24.9, 24.2))
+
+    def heat(phase, since, room, high=25.0):
+        return cycle_phase(
+            heating=True,
+            phase=phase,
+            phase_since=since,
+            now=NOW,
+            room=room,
+            low=21.0,
+            high=high,
+            settings=S,
+        )
+
+    def cool(phase, since, room):
+        return cycle_phase(
+            heating=False,
+            phase=phase,
+            phase_since=since,
+            now=NOW,
+            room=room,
+            low=21.0,
+            high=25.0,
+            settings=S,
+        )
+
+    # First decision: run unless already at the stop point.
+    assert heat(None, None, 21.0) == "run"
+    assert heat(None, None, 21.8) == "rest"
+    assert cool(None, None, 25.0) == "run"
+    assert cool(None, None, 24.2) == "rest"
+    # A run ends at the stop point, but not before its minimum time.
+    assert heat("run", NOW - 19 * M, 21.9) == "run"
+    assert heat("run", NOW - 20 * M, 21.8) == "rest"
+    assert heat("run", NOW - 60 * M, 21.7) == "run"
+    # ... unless the room reaches the maximum.
+    assert heat("run", NOW - 5 * M, 25.0) == "rest"
+    assert heat("run", NOW - 5 * M, 26.0, high=None) == "run"  # heat-only profile
+    # A rest ends at the start point after its minimum time, or at the hard limit.
+    assert heat("rest", NOW - 14 * M, 21.0) == "rest"
+    assert heat("rest", NOW - 15 * M, 21.1) == "run"
+    assert heat("rest", NOW - 60 * M, 21.2) == "rest"
+    assert heat("rest", NOW - 1 * M, 19.5) == "run"
+    # Cooling mirrored.
+    assert cool("run", NOW - 20 * M, 24.2) == "rest"
+    assert cool("run", NOW - 19 * M, 24.0) == "run"
+    assert cool("run", NOW - 5 * M, 21.0) == "rest"
+    assert cool("rest", NOW - 15 * M, 24.9) == "run"
+    assert cool("rest", NOW - 14 * M, 25.4) == "rest"
+    assert cool("rest", NOW - 1 * M, 26.5) == "run"

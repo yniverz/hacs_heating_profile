@@ -122,6 +122,14 @@ CONF_OFFSET_STEP = "offset_step"
 CONF_ACTIVE_POWER = "active_power"
 CONF_HIGH_POWER = "high_power"
 
+# Anti short cycle (switch): the control runs the compressor in long runs
+# and rests itself instead of letting the AC hold the setpoint.
+CONF_CYCLE_STOP_MARGIN = "cycle_stop_margin"
+CONF_CYCLE_MIN_RUN = "cycle_min_run"
+CONF_CYCLE_MIN_REST = "cycle_min_rest"
+CONF_CYCLE_RUN_MARGIN = "cycle_run_margin"
+CONF_CYCLE_AVERAGE = "cycle_average"
+
 # Manual changes on the AC
 CONF_PAUSE = "pause"
 CONF_COMMAND_GRACE = "command_grace"
@@ -165,6 +173,11 @@ CONTROL_DEFAULTS: dict[str, float | bool] = {
     CONF_OFFSET_STEP: 0.5,  # °C largest change per learning step
     CONF_ACTIVE_POWER: 50,  # W: the AC is working
     CONF_HIGH_POWER: 200,  # W: the AC works hard (warm-up, not learned)
+    CONF_CYCLE_STOP_MARGIN: 0.8,  # °C: a run heats to min + this (cools max - this)
+    CONF_CYCLE_MIN_RUN: 20,  # min
+    CONF_CYCLE_MIN_REST: 15,  # min
+    CONF_CYCLE_RUN_MARGIN: 5.0,  # °C: setpoint while running = room +/- this
+    CONF_CYCLE_AVERAGE: 5,  # min room average for the run/rest decision
     CONF_PAUSE: 120,  # min after a manual change on the AC
     CONF_COMMAND_GRACE: 90,  # s after an own command
     CONF_AVERAGE_WINDOW: 10,  # min
@@ -195,6 +208,10 @@ CONTROL_STATES = [
     STATE_HEATING,
     STATE_COOLING,
 ]
+
+# Phases of the anti short cycle
+PHASE_RUN = "run"
+PHASE_REST = "rest"
 
 # Modes (layer 1)
 MODE_NEUTRAL = "neutral"

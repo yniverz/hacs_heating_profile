@@ -54,6 +54,9 @@
     "switch": {
       "control": {
         "name": "Climate control"
+      },
+      "anti_short_cycle": {
+        "name": "Anti short cycle"
       }
     },
     "button": {
@@ -285,6 +288,24 @@
               "high_power": "Power at which it counts as warm-up; too cold/warm is then not learned."
             }
           },
+          "anti_short_cycle": {
+            "name": "Anti short cycle",
+            "description": "Used while the \"Anti short cycle\" switch is on: in heat and cool mode the control itself runs the compressor in long runs with rests in between, instead of letting the AC hold a setpoint. Learning is paused meanwhile.",
+            "data": {
+              "cycle_stop_margin": "Run until",
+              "cycle_min_run": "Minimum run time",
+              "cycle_min_rest": "Minimum rest time",
+              "cycle_run_margin": "Setpoint while running",
+              "cycle_average": "Average over"
+            },
+            "data_description": {
+              "cycle_stop_margin": "A run heats until the minimum plus this (cools until the maximum minus this). A rest ends at \"Start near the limit\" (targets section). Must be above it.",
+              "cycle_min_run": "A run lasts at least this long; only reaching the maximum (cooling: minimum) ends it earlier.",
+              "cycle_min_rest": "A rest lasts at least this long; only the hard limit ends it earlier.",
+              "cycle_run_margin": "While running the AC gets the room temperature plus this (cooling: minus this), so its own sensor keeps the compressor on. It never moves back within a run. While resting it gets its lowest (cooling: highest) setpoint.",
+              "cycle_average": "Run and rest are decided on the room temperature averaged over this time."
+            }
+          },
           "manual": {
             "name": "Manual changes on the AC",
             "description": "A change on the AC that the control didn't send pauses the control.",
@@ -316,7 +337,8 @@
       "control_incomplete": "Choose both a room temperature sensor and an air conditioner, or neither.",
       "activity_missing": "Choose an AC power sensor or a compressor running sensor.",
       "offset_range": "The smallest offset must be below the largest.",
-      "power_thresholds": "'AC working hard from' must be above 'AC working from'."
+      "power_thresholds": "'AC working hard from' must be above 'AC working from'.",
+      "cycle_margins": "'Run until' must be above 'Start near the limit'."
     }
   }
 }

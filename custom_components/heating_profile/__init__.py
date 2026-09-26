@@ -44,6 +44,7 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 # Entities that only exist while the profile controls an AC (key -> platform).
 _CONTROL_ENTITIES: dict[str, Platform] = {
     "control": Platform.SWITCH,
+    "anti_short_cycle": Platform.SWITCH,
     "end_pause": Platform.BUTTON,
     "offset_heat": Platform.NUMBER,
     "offset_cool": Platform.NUMBER,

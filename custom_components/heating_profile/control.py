@@ -11,6 +11,9 @@ from dataclasses import dataclass
 
 from .const import (
     CONF_COOL_MARGIN,
+    CONF_CYCLE_MIN_REST,
+    CONF_CYCLE_MIN_RUN,
+    CONF_CYCLE_STOP_MARGIN,
     CONF_DRIFT_MARGIN,
     CONF_DRIFT_TIME,
     CONF_EARLY_EXIT,
@@ -40,6 +43,8 @@ from .const import (
     MODE_COOL,
     MODE_HEAT,
     MODE_NEUTRAL,
+    PHASE_REST,
+    PHASE_RUN,
 )
 
 
@@ -447,6 +452,60 @@ def _start_reason(
     if waited >= max_wait:
         return "waited"
     return "near"
+
+
+def cycle_limits(
+    heating: bool, low: float, high: float, settings: dict
+) -> tuple[float, float]:
+    """(start, stop) of a run: heating runs from min + start margin up to
+    min + stop margin, cooling from max - start margin down to max - stop
+    margin."""
+    start, stop = settings[CONF_START_MARGIN], settings[CONF_CYCLE_STOP_MARGIN]
+    if heating:
+        return low + start, low + stop
+    return high - start, high - stop
+
+
+def cycle_phase(
+    *,
+    heating: bool,
+    phase: str | None,
+    phase_since: float | None,
+    now: float,
+    room: float,
+    low: float | None,
+    high: float | None,
+    settings: dict,
+) -> str:
+    """Next phase (run / rest) of the anti short cycle in heat or cool mode.
+
+    A run lasts until the room reaches the stop point, a rest until it is
+    back at the start point, each at least its minimum time. Only reaching
+    the other limit ends a run early, only the hard limit a rest.
+    """
+    elapsed = now - phase_since if phase_since is not None else float("inf")
+    hard = settings[CONF_HARD_MARGIN]
+    if heating:
+        assert low is not None
+        start, stop = cycle_limits(True, low, 0.0, settings)
+        done = room >= stop
+        too_far = high is not None and room >= high
+        restart = room <= start
+        urgent = room <= low - hard
+    else:
+        assert high is not None
+        start, stop = cycle_limits(False, 0.0, high, settings)
+        done = room <= stop
+        too_far = low is not None and room <= low
+        restart = room >= start
+        urgent = room >= high + hard
+    if phase == PHASE_RUN:
+        min_run = settings[CONF_CYCLE_MIN_RUN] * 60
+        return PHASE_REST if too_far or (done and elapsed >= min_run) else PHASE_RUN
+    if phase == PHASE_REST:
+        min_rest = settings[CONF_CYCLE_MIN_REST] * 60
+        return PHASE_RUN if urgent or (restart and elapsed >= min_rest) else PHASE_REST
+    return PHASE_REST if done else PHASE_RUN
 
 
 def learn_step(

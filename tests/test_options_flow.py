@@ -169,6 +169,10 @@ async def test_settings_validation(hass: HomeAssistant, local_time) -> None:
         result["flow_id"], _sections({**defaults, "high_power": 40})
     )
     assert result["errors"] == {"base": "power_thresholds"}
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], _sections({**defaults, "start_margin": 0.8})
+    )
+    assert result["errors"] == {"base": "cycle_margins"}
 
 
 async def test_clearing_sources_removes_control(

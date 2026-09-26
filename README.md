@@ -304,6 +304,21 @@ automation) pauses the control for 2 h; *End pause* or switching the control
 off and on resumes it. The same command is repeated at most every 10 min.
 Room sensor unavailable: neutral. AC unavailable: nothing is sent.
 
+**Anti short cycle (switch).** For an AC that is too big for the room and
+keeps switching its compressor on and off: while the switch is on, the
+control itself runs the compressor in long runs with rests in between and
+no longer lets the AC hold a setpoint (layer 1 stays the same).
+
+| Phase | AC gets | Ends when |
+| --- | --- | --- |
+| Run | room + 5 °C (cooling: − 5 °C); within a run it only moves further | the room reaches the minimum + 0.8 °C (cooling: maximum − 0.8 °C), after at least 20 min; at once at the maximum |
+| Rest | its lowest setpoint (cooling: highest); the fan follows *compressor off* | the room is back at the minimum + 0.1 °C (cooling: maximum − 0.1 °C), after at least 15 min; at once at the hard limit |
+
+The room is averaged over 5 min for this. Learning is paused while the switch
+is on; leaving heat/cool mode (e.g. after 60 idle minutes in a long rest)
+works as before. If the compressor still stops during a run, raise *Setpoint
+while running*.
+
 Every number above is a setting in the second step of *Configure*.
 
 ### Entities
@@ -313,6 +328,7 @@ For a profile called `Living room`:
 | Entity | |
 | --- | --- |
 | `switch.living_room_climate_control` | control on/off (off: nothing is sent to the AC; room average, trend and forecast keep updating) |
+| `switch.living_room_anti_short_cycle` | long runs and rests instead of the AC's own regulation (see above) |
 | `button.living_room_end_pause` | end a pause after a manual change |
 | `climate.living_room` | its current temperature is the room sensor |
 | `sensor.living_room_control_status` | what it does, e.g. `Heating mode – holding 21.3 °C`; only changes when the situation changes, live values are attributes |
@@ -322,6 +338,11 @@ For a profile called `Living room`:
 | diagnostic sensors (disabled by default) | room average, room trend, forecast outside minimum/maximum and radiation for the next waiting window, AC setpoint, waiting until, paused until |
 
 ## Upgrading
+
+### From 0.7.3
+
+New switch *Anti short cycle* (off by default) and its settings section in
+*Configure*. Nothing changes until you turn it on.
 
 ### From 0.7.2
 

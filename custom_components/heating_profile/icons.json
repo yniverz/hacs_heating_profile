@@ -47,6 +47,12 @@
         "state": {
           "off": "mdi:robot-off"
         }
+      },
+      "anti_short_cycle": {
+        "default": "mdi:timer-sand",
+        "state": {
+          "off": "mdi:timer-sand-empty"
+        }
       }
     },
     "button": {
