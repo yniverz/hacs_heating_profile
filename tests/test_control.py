@@ -6,6 +6,7 @@ and recorded. Profile: day 06:00-22:00 with 21-25 °C, night 17-24 °C.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 import logging
 from typing import Any
@@ -13,7 +14,7 @@ from typing import Any
 from homeassistant.components.climate import DOMAIN as CLIMATE_DOMAIN
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import ATTR_ENTITY_ID
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 import pytest
@@ -1140,3 +1141,72 @@ async def test_anti_short_cycle_cooling_and_reset(
     assert st(hass, STATE) == "neutral" and c.state.phase is None
     stored = ControlState.from_dict(c.state.__dict__)
     assert stored.anti_short_cycle and stored.phase is None
+
+
+async def test_waits_for_the_ac_between_commands(
+    hass: HomeAssistant, freezer, control, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An AC that sends its whole last confirmed state with every command
+    (like Midea) must not get the fan mode before it shows the new setpoint."""
+    monkeypatch.setattr(
+        "custom_components.heating_profile.controller.CONFIRM_TIMEOUT_SECONDS", 10
+    )
+    entry, _calls = control
+    received: list[tuple[str, Any]] = []
+
+    async def _confirm_later(state: dict[str, Any]) -> None:
+        for _ in range(20):  # the AC answers a moment later
+            await asyncio.sleep(0)
+        set_ac(hass, state["mode"], state["temp"], state["fan"])
+
+    def handler(key: str, attr: str):
+        async def _handle(call: ServiceCall) -> None:
+            received.append((key, call.data[attr]))
+            ac = hass.states.get(AC)
+            state = {
+                "mode": ac.state,
+                "temp": ac.attributes["temperature"],
+                "fan": ac.attributes["fan_mode"],
+                key: call.data[attr],
+            }
+            hass.async_create_task(_confirm_later(state))
+
+        return _handle
+
+    for service, key, attr in (
+        ("set_hvac_mode", "mode", "hvac_mode"),
+        ("set_temperature", "temp", "temperature"),
+        ("set_fan_mode", "fan", "fan_mode"),
+    ):
+        hass.services.async_register(CLIMATE_DOMAIN, service, handler(key, attr))
+
+    hass.states.async_set(ROOM, "21.0")
+    await advance(hass, freezer, 10)
+    assert st(hass, STATE) == "heating"
+    assert received == [("mode", "heat"), ("temp", 23.5), ("fan", "silent")]
+    ac = hass.states.get(AC)
+    assert ac.state == "heat"
+    assert ac.attributes["temperature"] == 23.5
+    assert ac.attributes["fan_mode"] == "silent"
+
+
+async def test_command_undone_by_the_ac_is_repeated_once(
+    hass: HomeAssistant, freezer, control
+) -> None:
+    """The AC shows the command, then undoes it: repeated once right away;
+    otherwise the same command only every 10 min."""
+    entry, calls = control
+    await start_heating(hass, freezer, calls)  # AC at heat / 23.5 / auto
+    # The AC falls back to an older setpoint by itself.
+    set_ac(hass, "heat", 22.0, "auto")
+    await hass.async_block_till_done()
+    assert sent(calls) == [("set_temperature", {"temperature": 23.5})]
+    set_ac(hass, "heat", 23.5, "auto")
+    set_ac(hass, "heat", 22.0, "auto")  # undone again: no loop
+    await hass.async_block_till_done()
+    assert sent(calls) == []
+    assert st(hass, STATE) == "heating"  # within the grace: no manual pause
+    await advance(hass, freezer, 9)
+    assert sent(calls) == []
+    await advance(hass, freezer, 1)
+    assert sent(calls) == [("set_temperature", {"temperature": 23.5})]

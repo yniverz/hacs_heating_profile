@@ -301,7 +301,11 @@ AC cycles by itself, far from the target, or while the room is still changing
 
 **Also:** a change on the AC the control didn't send (remote, app, another
 automation) pauses the control for 2 h; *End pause* or switching the control
-off and on resumes it. The same command is repeated at most every 10 min.
+off and on resumes it. The parts of a command (mode, setpoint, fan) are sent
+one after another, each once the AC shows the previous one (at most 10 s), so
+an AC that sends its whole state with every change doesn't undo them. The same
+command is repeated at most every 10 min, once right away if the AC showed it
+and then undid it by itself.
 Room sensor unavailable: neutral. AC unavailable: nothing is sent.
 
 **Anti short cycle (switch).** For an AC that is too big for the room and

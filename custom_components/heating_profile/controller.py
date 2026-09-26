@@ -84,6 +84,7 @@ from .const import (
     CONF_TREND_WINDOW,
     CONF_USE_FORECAST,
     CONF_WARMTH_MARGIN,
+    CONFIRM_TIMEOUT_SECONDS,
     CONTROL_DEFAULTS,
     CONTROL_INTERVAL_SECONDS,
     CONTROL_STORAGE_VERSION,
@@ -355,6 +356,9 @@ class ClimateController:
         self._pending = False
         self._stopped = False
         self._warned_mode: str | None = None
+        # The AC undid the last command by itself; it is repeated once.
+        self._undone = False
+        self._retried = False
 
     # ----- lifecycle -------------------------------------------------------
 
@@ -569,6 +573,20 @@ class ClimateController:
             "fan": fan if mode != HVAC_MODE_OFF else None,
         }
 
+    def _matches(self, state: State) -> bool:
+        """The AC shows the last command (only what the control set)."""
+        last = self.state.last_command
+        if last is None:
+            return False
+        current = self._ac_tuple(
+            state.state,
+            state.attributes.get(ATTR_TEMPERATURE),
+            state.attributes.get(ATTR_FAN_MODE),
+        )
+        return last["mode"] == current["mode"] and all(
+            last.get(k) is None or last.get(k) == current[k] for k in current
+        )
+
     @callback
     def _async_ac_changed(self, event: Event[EventStateChangedData]) -> None:
         old, new = event.data["old_state"], event.data["new_state"]
@@ -587,6 +605,13 @@ class ClimateController:
             self.state.last_command_at is not None
             and now - self.state.last_command_at <= self.settings[CONF_COMMAND_GRACE]
         ):
+            # The AC's reaction to a command. If it showed the command and
+            # then undid it (e.g. a later packet with its old state), repeat.
+            if self._matches(old) and not self._matches(new) and not self._retried:
+                self._undone = True
+                self._schedule_evaluate()
+            return
+        if self._matches(new):
             return
         last = self.state.last_command
         current = self._ac_tuple(
@@ -594,11 +619,6 @@ class ClimateController:
             new.attributes.get(ATTR_TEMPERATURE),
             new.attributes.get(ATTR_FAN_MODE),
         )
-        # Compare only what the control actually set.
-        if last["mode"] == current["mode"] and all(
-            last.get(k) is None or last.get(k) == current[k] for k in current
-        ):
-            return
         if self.settings[CONF_PAUSE] <= 0:
             return
         self.state.pause_until = now + self.settings[CONF_PAUSE] * 60
@@ -958,18 +978,50 @@ class ClimateController:
             and self.state.last_command_at is not None
             and now - self.state.last_command_at < RESEND_INTERVAL_SECONDS
         ):
-            return  # sent recently; the AC hasn't followed (yet)
+            if not self._undone or self._retried:
+                return  # sent recently; the AC hasn't followed (yet)
+            _LOGGER.info("%s undid %s, sending it again", self.ac, want)
+            self._retried = True
+        elif want != self.state.last_command:
+            self._retried = False
+        self._undone = False
         # Remember first, so the manual-change detection ignores the echo.
         self.state.last_command = want
         self.state.last_command_at = now
-        calls: list[tuple[str, dict[str, Any]]] = []
+        # Each call with the check that the AC shows it.
+        calls: list[tuple[str, dict[str, Any], Callable[[State], bool]]] = []
         if send_mode:
-            calls.append((SERVICE_SET_HVAC_MODE, {ATTR_HVAC_MODE: want["mode"]}))
+            calls.append(
+                (
+                    SERVICE_SET_HVAC_MODE,
+                    {ATTR_HVAC_MODE: want["mode"]},
+                    lambda s: s.state == want["mode"],
+                )
+            )
         if send_temp:
-            calls.append((SERVICE_SET_TEMPERATURE, {ATTR_TEMPERATURE: want["temp"]}))
+            calls.append(
+                (
+                    SERVICE_SET_TEMPERATURE,
+                    {ATTR_TEMPERATURE: want["temp"]},
+                    lambda s: (
+                        self._ac_tuple(
+                            s.state, s.attributes.get(ATTR_TEMPERATURE), None
+                        )["temp"]
+                        == want["temp"]
+                    ),
+                )
+            )
         if send_fan:
-            calls.append((SERVICE_SET_FAN_MODE, {ATTR_FAN_MODE: want["fan"]}))
-        for service, data in calls:
+            calls.append(
+                (
+                    SERVICE_SET_FAN_MODE,
+                    {ATTR_FAN_MODE: want["fan"]},
+                    lambda s: s.attributes.get(ATTR_FAN_MODE) == want["fan"],
+                )
+            )
+        for i, (service, data, _check) in enumerate(calls):
+            if i > 0 and not await self._async_wait_for_ac(calls[i - 1][2]):
+                _LOGGER.debug("%s didn't confirm %s in time", self.ac, calls[i - 1][0])
             try:
                 await self.hass.services.async_call(
                     CLIMATE_DOMAIN,
@@ -979,6 +1031,33 @@ class ClimateController:
                 )
             except (HomeAssistantError, ValueError) as err:
                 _LOGGER.warning("Could not %s on %s: %s", service, self.ac, err)
+
+    async def _async_wait_for_ac(self, check: Callable[[State], bool]) -> bool:
+        """Wait until the AC's state passes `check` (False after the timeout)."""
+
+        def ok(state: State | None) -> bool:
+            return state is not None and check(state)
+
+        if ok(self.hass.states.get(self.ac)):
+            return True
+        if CONFIRM_TIMEOUT_SECONDS <= 0:
+            return False
+        confirmed = asyncio.Event()
+
+        @callback
+        def _changed(event: Event[EventStateChangedData]) -> None:
+            if ok(event.data["new_state"]):
+                confirmed.set()
+
+        unsub = async_track_state_change_event(self.hass, [self.ac], _changed)
+        try:
+            async with asyncio.timeout(CONFIRM_TIMEOUT_SECONDS):
+                await confirmed.wait()
+        except TimeoutError:
+            return False
+        finally:
+            unsub()
+        return True
 
     # ----- texts -----------------------------------------------------------
 

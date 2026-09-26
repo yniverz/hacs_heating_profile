@@ -19,6 +19,14 @@ def auto_enable_custom_integrations(enable_custom_integrations):
     return
 
 
+@pytest.fixture(autouse=True)
+def short_confirm_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mocked AC services don't change the AC's state: don't wait."""
+    monkeypatch.setattr(
+        "custom_components.heating_profile.controller.CONFIRM_TIMEOUT_SECONDS", 0
+    )
+
+
 @pytest.fixture
 def local_time(freezer: FrozenDateTimeFactory):
     """Return a helper that freezes the clock at a local HH:MM:SS today."""

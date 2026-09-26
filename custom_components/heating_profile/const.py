@@ -220,8 +220,14 @@ MODE_COOL = "cool"
 MODES = (MODE_NEUTRAL, MODE_HEAT, MODE_COOL)
 
 CONTROL_INTERVAL_SECONDS = 60
-# The same command is repeated at most this often if the AC doesn't follow.
+# The same command is repeated at most this often if the AC doesn't follow
+# (once right away if the AC showed it and then undid it by itself).
 RESEND_INTERVAL_SECONDS = 600
+# Before the next part of a command, wait at most this long until the AC shows
+# the previous one: some integrations (e.g. Midea) send the AC's whole last
+# known state with every change, so a fan mode sent too early would carry the
+# old mode and target temperature and undo them.
+CONFIRM_TIMEOUT_SECONDS = 10.0
 FORECAST_INTERVAL_MINUTES = 30
 FORECAST_MAX_AGE_HOURS = 3
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
