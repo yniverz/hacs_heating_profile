@@ -64,8 +64,15 @@ CONF_ROOM_SENSOR = "room_sensor"
 CONF_AC = "ac_entity"
 CONF_POWER_SENSOR = "power_sensor"
 CONF_COMPRESSOR = "compressor_sensor"
+CONF_FAN_SPEED = "fan_speed_sensor"
 CONF_USE_FORECAST = "use_forecast"
-SOURCE_KEYS = (CONF_ROOM_SENSOR, CONF_AC, CONF_POWER_SENSOR, CONF_COMPRESSOR)
+SOURCE_KEYS = (
+    CONF_ROOM_SENSOR,
+    CONF_AC,
+    CONF_POWER_SENSOR,
+    CONF_COMPRESSOR,
+    CONF_FAN_SPEED,
+)
 
 # AC modes
 CONF_IDLE_HVAC_MODE = "idle_hvac_mode"

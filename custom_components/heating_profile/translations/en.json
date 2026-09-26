@@ -149,6 +149,7 @@
           "ac_entity": "Air conditioner",
           "power_sensor": "AC power sensor",
           "compressor_sensor": "Compressor running sensor",
+          "fan_speed_sensor": "Indoor fan speed sensor",
           "use_forecast": "Use the weather forecast"
         },
         "data_description": {
@@ -156,6 +157,7 @@
           "ac_entity": "Climate entity of the AC that gets the commands.",
           "power_sensor": "Shows whether the AC is working and how hard. Used to leave a mode when the AC idles, and for learning. This or the compressor sensor is required.",
           "compressor_sensor": "On while the compressor runs. Used instead of the power sensor if that isn't set; for the fan mode it is used first.",
+          "fan_speed_sensor": "Optional, e.g. the fan RPM. If set, the fan mode for a stopped compressor is only set once the fan has stopped (0); while it keeps running after the compressor stops, the fan mode stays as it is.",
           "use_forecast": "Hourly forecast from Open-Meteo for the Home Assistant location. Lets the control wait for free warmth or cooling, and leave a mode early when it gets really warm or cool outside."
         }
       },

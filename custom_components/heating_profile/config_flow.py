@@ -33,6 +33,7 @@ from .const import (
     CONF_EXIT_SUN,
     CONF_EXIT_WARMTH_MARGIN,
     CONF_EXIT_WINDOW,
+    CONF_FAN_SPEED,
     CONF_FAST_TREND,
     CONF_HARD_MARGIN,
     CONF_HIGH_POWER,
@@ -269,6 +270,9 @@ class HeatingProfileOptionsFlow(OptionsFlow):
                 vol.Optional(
                     CONF_COMPRESSOR, description=suggested(CONF_COMPRESSOR)
                 ): _entity(["binary_sensor"]),
+                vol.Optional(
+                    CONF_FAN_SPEED, description=suggested(CONF_FAN_SPEED)
+                ): _entity(["sensor"]),
                 vol.Optional(
                     CONF_USE_FORECAST,
                     default=current.get(

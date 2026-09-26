@@ -30,6 +30,7 @@ ROOM = "sensor.room"
 AC = "climate.ac"
 POWER = "sensor.ac_power"
 COMP = "binary_sensor.compressor"
+FAN = "sensor.fan_rpm"
 PROFILE = "climate.living_room"
 STATUS = "sensor.living_room_control_status"
 REASON = "sensor.living_room_control_reason"
@@ -992,3 +993,47 @@ async def test_migrates_old_forecast_margins(
     assert entry.options["exit_warmth_margin"] == 2.0
     assert entry.options["exit_cool_margin"] == 4.5
     assert entry.state is ConfigEntryState.LOADED
+
+
+async def test_fan_speed_sensor_waits_for_the_fan_to_stop(
+    hass: HomeAssistant, local_time, freezer
+) -> None:
+    """With a fan speed sensor the standby fan mode waits for the fan to stop."""
+    hass.states.async_set(FAN, "800")
+    entry, calls = await setup_control(
+        hass, local_time, freezer, {**OPTIONS, "fan_speed_sensor": FAN}
+    )
+    # Heat starts: compressor off, but the fan runs -> running fan mode.
+    hass.states.async_set(ROOM, "21.0")
+    await advance(hass, freezer, 10)
+    assert st(hass, STATE) == "heating"
+    assert ("set_fan_mode", {"fan_mode": "auto"}) in sent(calls)
+    set_ac(hass, "heat", 23.5, "auto")
+    set_power(hass, 250)
+    await advance(hass, freezer, 5)
+    # Compressor stops, the fan keeps running: nothing changes.
+    set_power(hass, 5)
+    await advance(hass, freezer, 5)
+    assert sent(calls) == []
+    # The fan stops -> standby fan mode right away.
+    hass.states.async_set(FAN, "0")
+    await hass.async_block_till_done()
+    assert sent(calls) == [("set_fan_mode", {"fan_mode": "silent"})]
+    set_ac(hass, "heat", 23.5, "silent")
+    # It spins again in silent: stays silent while the compressor is off.
+    hass.states.async_set(FAN, "400")
+    await advance(hass, freezer, 5)
+    assert sent(calls) == []
+    # Compressor runs -> running fan mode; stopping again waits for the fan.
+    set_power(hass, 250)
+    await hass.async_block_till_done()
+    assert sent(calls) == [("set_fan_mode", {"fan_mode": "auto"})]
+    set_ac(hass, "heat", 23.5, "auto")
+    set_power(hass, 5)
+    await advance(hass, freezer, 3)
+    assert sent(calls) == []
+    # Fan speed unknown: like without the sensor.
+    hass.states.async_set(FAN, "unavailable")
+    await hass.async_block_till_done()
+    assert sent(calls) == [("set_fan_mode", {"fan_mode": "silent"})]
+    assert controller(entry).state.standby_fan

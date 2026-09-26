@@ -240,6 +240,7 @@ data:
 | Air conditioner | Climate entity that gets the commands. Required. |
 | AC power sensor | Shows whether the AC works and how hard (leaving a mode, learning). This or the compressor sensor is required. |
 | Compressor running sensor | Used instead of the power sensor if that isn't set; for the fan mode it is used first. |
+| Indoor fan speed sensor | Optional (e.g. fan RPM): the fan mode for a stopped compressor is only set once the fan has stopped. |
 | Use the weather forecast | Hourly Open-Meteo forecast for the Home Assistant location (no API key). |
 
 Leave room sensor and AC empty to turn the control off again; its entities
@@ -284,8 +285,11 @@ mode (e.g. fan only, silent).
 **2. Setpoint and fan.** The fan runs *Fan while heating/cooling* (auto)
 while the compressor runs and *compressor off* (silent) while it doesn't, so
 the room air keeps moving. Whether it runs comes from the compressor sensor,
-or else the power sensor (below 50 W = off); the fan mode changes as soon as
-either sensor shows a change. Heat mode holds minimum + 0.3 °C, cool mode maximum −
+or else the power sensor (below 50 W = off). With a fan speed sensor it
+waits until the fan has actually stopped (0); if the fan keeps running after
+the compressor stops, the running fan mode stays. The compressor-off mode
+then stays until the compressor runs again. The fan mode changes as soon as a
+sensor shows a change. Heat mode holds minimum + 0.3 °C, cool mode maximum −
 0.3 °C. The AC gets that target plus (heating) or minus (cooling) an
 **offset** that makes up for its own sensor (it sits in its own air stream).
 The offset is learned from the room sensor every 20 min: raised when the room
@@ -323,7 +327,8 @@ For a profile called `Living room`:
 
 New setting *Fan while heating/cooling, compressor off* (default silent):
 in heat and cool mode the fan now switches to it while the compressor is
-off, and back to *Fan while heating/cooling* when it runs.
+off, and back to *Fan while heating/cooling* when it runs. Optionally add
+an indoor fan speed sensor so it only switches once the fan has stopped.
 
 ### From 0.7.0
 

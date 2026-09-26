@@ -210,6 +210,7 @@ async def test_flow_over_http_api(hass: HomeAssistant, hass_client) -> None:
         "ac_entity",
         "power_sensor",
         "compressor_sensor",
+        "fan_speed_sensor",
         "use_forecast",
     ]
     resp = await client.post(

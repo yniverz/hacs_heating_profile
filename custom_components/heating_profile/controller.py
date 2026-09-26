@@ -63,6 +63,7 @@ from .const import (
     CONF_COOL_MARGIN,
     CONF_DRIFT_TIME,
     CONF_EXIT_WINDOW,
+    CONF_FAN_SPEED,
     CONF_HARD_MARGIN,
     CONF_HIGH_POWER,
     CONF_IDLE_FAN_MODE,
@@ -182,6 +183,8 @@ class ControlState:
     target_changed_at: float | None = None
     reason: str = ""
     reason_since: float | None = None
+    # Heat/cool: the fan mode for a stopped compressor is in use.
+    standby_fan: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ControlState:
@@ -318,6 +321,7 @@ class ClimateController:
         self.ac: str = options[CONF_AC]
         self.power_sensor: str | None = options.get(CONF_POWER_SENSOR) or None
         self.compressor: str | None = options.get(CONF_COMPRESSOR) or None
+        self.fan_speed: str | None = options.get(CONF_FAN_SPEED) or None
         self._store: Store[dict[str, Any]] = Store(
             hass, CONTROL_STORAGE_VERSION, control_storage_key(entry_id)
         )
@@ -351,7 +355,7 @@ class ClimateController:
             async_track_state_change_event(hass, [self.ac], self._async_ac_changed),
             async_track_state_change_event(
                 hass,
-                [e for e in (self.compressor, self.power_sensor) if e],
+                [e for e in (self.compressor, self.power_sensor, self.fan_speed) if e],
                 self._async_activity_changed,
             ),
             async_track_time_interval(
@@ -431,9 +435,11 @@ class ClimateController:
 
     @callback
     def _async_activity_changed(self, event: Event[EventStateChangedData]) -> None:
-        # Switch the fan mode right away when the compressor starts or stops.
+        # Switch the fan mode right away when the compressor or fan starts/stops.
         old, new = event.data["old_state"], event.data["new_state"]
-        if self._running(old) != self._running(new):
+        running = self._running(old) != self._running(new)
+        fan = self._fan_stopped(old) != self._fan_stopped(new)
+        if running or fan:
             self._schedule_evaluate()
 
     async def _async_tick(self, _now: datetime) -> None:
@@ -465,29 +471,33 @@ class ClimateController:
                 return comp.state == STATE_ON, None, None
         return None, None, None
 
+    def _sensor(self, entity_id: str, changed: State | None) -> State | None:
+        """The sensor's state; `changed` replaces it if it belongs to it."""
+        if changed is not None and changed.entity_id == entity_id:
+            return changed
+        return self.hass.states.get(entity_id)
+
     def _running(self, changed: State | None = None) -> bool | None:
-        """Whether the compressor runs: compressor sensor first, then power.
-
-        `changed` replaces the current state of the sensor it belongs to.
-        """
-
-        def state(entity_id: str) -> State | None:
-            if changed is not None and changed.entity_id == entity_id:
-                return changed
-            return self.hass.states.get(entity_id)
-
+        """Whether the compressor runs: compressor sensor first, then power."""
         if self.compressor:
-            comp = state(self.compressor)
+            comp = self._sensor(self.compressor, changed)
             if comp is not None and comp.state not in (
                 STATE_UNAVAILABLE,
                 STATE_UNKNOWN,
             ):
                 return comp.state == STATE_ON
         if self.power_sensor:
-            power = self._number(state(self.power_sensor))
+            power = self._number(self._sensor(self.power_sensor, changed))
             if power is not None:
                 return power >= self.settings[CONF_ACTIVE_POWER]
         return None
+
+    def _fan_stopped(self, changed: State | None = None) -> bool:
+        """Whether the indoor fan stands still; True without a speed sensor."""
+        if not self.fan_speed:
+            return True
+        speed = self._number(self._sensor(self.fan_speed, changed))
+        return speed is None or speed <= 0
 
     # ----- user actions ----------------------------------------------------
 
@@ -723,12 +733,14 @@ class ClimateController:
         if self.profile.hvac_mode == HVAC_MODE_OFF:
             want = self._ac_tuple(HVAC_MODE_OFF, None, None)
         elif target is not None:
-            # The AC stops its fan with the compressor; keep the air moving.
-            fan = s[
-                CONF_STANDBY_FAN_MODE
-                if self._running() is False
-                else CONF_ACTIVE_FAN_MODE
-            ]
+            # The AC may stop its fan with the compressor; keep the air moving.
+            # Once set, the standby fan mode stays until the compressor runs
+            # again (its own fan speed would otherwise switch it right back).
+            if self._running() is not False:
+                st.standby_fan = False
+            elif self._fan_stopped():
+                st.standby_fan = True
+            fan = s[CONF_STANDBY_FAN_MODE if st.standby_fan else CONF_ACTIVE_FAN_MODE]
             if d.mode == MODE_HEAT:
                 setpoint = self._setpoint(target + st.offset_heat, attrs)
                 want = self._ac_tuple("heat", setpoint, fan)
@@ -737,6 +749,8 @@ class ClimateController:
                 want = self._ac_tuple("cool", setpoint, fan)
         else:
             want = self._ac_tuple(s[CONF_IDLE_HVAC_MODE], None, s[CONF_IDLE_FAN_MODE])
+        if target is None or self.profile.hvac_mode == HVAC_MODE_OFF:
+            st.standby_fan = False
         await self._async_send(want, ac_state)
 
         self.view = self._build_view(
@@ -770,6 +784,7 @@ class ClimateController:
         st.mode = d.mode
         st.mode_since = now
         st.idle_since = None
+        st.standby_fan = False
 
     def _learn(
         self,
