@@ -94,9 +94,10 @@ dashboards, but automations can still use them.
 ### Climate entity
 
 - **State / HVAC mode:** `heat`, `cool`, `heat_cool` (shown as *Auto* in the
-  card) or `off`. It's only stored, so your automations decide what each mode
-  means. The intended meaning: heat up to the minimum, cool down to the
-  maximum, or keep the room inside the range with either. Turning it on again
+  card) or `off`: heat up to the minimum, cool down to the maximum, or keep
+  the room inside the range with either. Without a climate control it's only
+  stored and your automations decide what it means; with one, the control
+  acts on it (see [Climate control](#climate-control)). Turning it on again
   restores the last mode (heat, cool or heat_cool).
 - **Period:** day between *Day starts* and *Night starts*, otherwise night.
   The day range may cross midnight (e.g. day 20:00 → night 04:00). If both
@@ -123,6 +124,7 @@ dashboards, but automations can still use them.
 
 | Attribute | Example | |
 | --- | --- | --- |
+| `current_temperature` | `21.4` | the climate control's room sensor (empty without a control) |
 | `temperature` | `21.0` | active target in heat/cool (standard climate attribute) |
 | `target_temp_low` / `target_temp_high` | `21.0` / `25.0` | active range in heat_cool (standard climate attributes) |
 | `preset_mode` | `day` | standard climate attribute |
@@ -226,20 +228,6 @@ data:
   day_start: "{{ '08:00' if now().weekday() >= 5 else '06:00' }}"
 ```
 
-## Upgrading from 0.3.x
-
-- Each period got a **maximum**; your existing temperatures become the
-  minimum. New maximums default to 25 °C (day) and 24 °C (night), or 1 °C
-  above the minimum if that's higher.
-- The **Auto** mode is now the standard `heat_cool` mode and holds the range.
-  A stored `auto` is converted automatically; automations that set
-  `hvac_mode: auto` need to use `heat_cool`.
-- `temperature` is now empty in heat_cool and off; use `target_temp_low` /
-  `target_temp_high`, or `day_temp` / `night_temp`, which are always set.
-- Existing entities keep their entity IDs (e.g.
-  `number.living_room_day_temperature`); only their names change to
-  *Day minimum* / *Night minimum*.
-
 ## Climate control
 
 **Settings → Devices & services → Heating Profile → Configure** (per profile).
@@ -284,9 +272,9 @@ mode (e.g. fan only, silent).
 - **Heat → neutral** when the AC has idled for 60 min (power sensor or
   compressor), the room is at the target and the mode has lasted 2 h.
 - **Early switch to neutral:** if it stays really warm outside (above the
-  maximum + 2 °C for the next 2 h, or sun ≥ 400 W/m²) and the room is at least
-  at the minimum. The room may then drift 0.3 °C below the minimum for up to 60 min
-  before heat mode comes back. Cooling mirrored.
+  maximum + 2 °C for the next 2 h, or sun ≥ 400 W/m²) and the room is at
+  least at the minimum. The room may then drift 0.3 °C below the minimum for
+  up to 60 min before heat mode comes back. Cooling mirrored.
 - **Protection:** at least 30 min between neutral and heat/cool, 6 h between
   heating and cooling; 1.5 °C beyond the range switches right away.
 - **Look ahead:** 30 min before a day/night switch (or the end of a manual
@@ -325,12 +313,35 @@ For a profile called `Living room`:
 | `number.living_room_heating_offset`, `number.living_room_cooling_offset` | learned offsets (can be set by hand) |
 | diagnostic sensors (disabled by default) | room average, room trend, forecast outside minimum/maximum and radiation for the next waiting window, AC setpoint, waiting until, paused until |
 
-## Upgrading from 0.6.x
+## Upgrading
+
+### From 0.7.0
+
+The forecast margins now count from the opposite limit of the range (warmth
+from the maximum, cool air from the minimum). Options still at the old
+defaults are converted automatically; check your own values under
+*Configure*.
+
+### From 0.6.x
 
 The on/off control (heat to the middle of the range, then fan) is replaced
 by the mode + setpoint control above. Presence is gone. Learned offsets are
 kept. Open *Configure* once: choose the AC power sensor and check the new
 settings (the old ones are dropped when you save).
+
+### From 0.3.x
+
+- Each period got a **maximum**; your existing temperatures become the
+  minimum. New maximums default to 25 °C (day) and 24 °C (night), or 1 °C
+  above the minimum if that's higher.
+- The **Auto** mode is now the standard `heat_cool` mode and holds the range.
+  A stored `auto` is converted automatically; automations that set
+  `hvac_mode: auto` need to use `heat_cool`.
+- `temperature` is now empty in heat_cool and off; use `target_temp_low` /
+  `target_temp_high`, or `day_temp` / `night_temp`, which are always set.
+- Existing entities keep their entity IDs (e.g.
+  `number.living_room_day_temperature`); only their names change to
+  *Day minimum* / *Night minimum*.
 
 ## Storage
 

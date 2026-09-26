@@ -71,16 +71,6 @@ class RoomHistory:
         while len(self._samples) > 1 and self._samples[1][0] <= ts - self._keep:
             self._samples.popleft()
 
-    def clear(self) -> None:
-        """Forget all readings."""
-        self._samples.clear()
-        self._latest = None
-
-    @property
-    def empty(self) -> bool:
-        """Return True without readings."""
-        return not self._samples
-
     def value_at(self, ts: float) -> float | None:
         """Value valid at `ts` (the first reading if `ts` is before it)."""
         if not self._samples:
@@ -112,14 +102,6 @@ class RoomHistory:
         if current is None or before is None:
             return 0.0
         return current - before
-
-    def extreme_since(self, since: float, now: float, highest: bool) -> float | None:
-        """Highest (or lowest) value between `since` and `now`."""
-        start = self.value_at(since)
-        if start is None:
-            return None
-        values = [start] + [v for ts, v in self._samples if since < ts <= now]
-        return max(values) if highest else min(values)
 
 
 @dataclass

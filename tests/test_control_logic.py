@@ -20,7 +20,7 @@ M = 60.0
 NOW = 100 * H
 
 
-def test_history_step_function_mean_change_extremes() -> None:
+def test_history_step_function_mean_and_change() -> None:
     """Readings hold until the next one; mean is time-weighted."""
     h = RoomHistory(4 * H)
     assert h.mean(1000, 600) is None
@@ -36,8 +36,6 @@ def test_history_step_function_mean_change_extremes() -> None:
     assert h.change(1200, 1200) == pytest.approx(-1.0)
     h.add(1200 + 32 * 60, 19.6)  # sparse sensor: long stable, then a step
     assert h.change(1200 + 32 * 60, 1800) == pytest.approx(-0.4)
-    assert h.extreme_since(0, 5000, highest=True) == 21.0
-    assert h.extreme_since(700, 5000, highest=False) == 19.6
 
 
 def test_history_ignores_repeats_old_readings_and_prunes() -> None:
