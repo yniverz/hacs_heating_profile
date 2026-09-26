@@ -271,15 +271,15 @@ mode (e.g. fan only, silent).
 | Off | the AC is switched off |
 
 - **Neutral → heat** when the room (10-min average) reaches the minimum +
-  0.1 °C, unless free warmth is coming: at least minimum + 1 °C outside for
-  the whole next hour, or sun ≥ 250 W/m². It waits at most 60 min, and not
-  while the room falls 0.3 °C per 30 min or faster. Cool mode mirrored (maximum
-  − 0.1 °C; at most maximum − 2 °C outside).
+  0.1 °C, unless free warmth is coming: outside above the range's maximum +
+  1 °C for the whole next hour, or sun ≥ 250 W/m². It waits at most 60 min,
+  and not while the room falls 0.3 °C per 30 min or faster. Cool mode mirrored
+  (maximum − 0.1 °C; outside below the minimum − 1 °C).
 - **Heat → neutral** when the AC has idled for 60 min (power sensor or
   compressor), the room is at the target and the mode has lasted 2 h.
-- **Early switch to neutral:** if it stays really warm outside (minimum +
-  3 °C for the next 2 h, or sun ≥ 400 W/m²) and the room is at least at the
-  minimum. The room may then drift 0.3 °C below the minimum for up to 60 min
+- **Early switch to neutral:** if it stays really warm outside (above the
+  maximum + 2 °C for the next 2 h, or sun ≥ 400 W/m²) and the room is at least
+  at the minimum. The room may then drift 0.3 °C below the minimum for up to 60 min
   before heat mode comes back. Cooling mirrored.
 - **Protection:** at least 30 min between neutral and heat/cool, 6 h between
   heating and cooling; 1.5 °C beyond the range switches right away.

@@ -110,10 +110,12 @@ def sit(**kw) -> Situation:
     return Situation(**base)
 
 
-WARM = ForecastWindow(min_temp=22.0, max_temp=23.0, radiation=0.0)  # >= 21 + 1
-HOT = ForecastWindow(min_temp=24.5, max_temp=28.0, radiation=0.0)  # >= 21 + 3
-COOLAIR = ForecastWindow(min_temp=15.0, max_temp=23.0, radiation=0.0)  # <= 25 - 2
-COLD = ForecastWindow(min_temp=10.0, max_temp=21.5, radiation=0.0)  # <= 25 - 3
+# Range 21-25: warmth needs outside > max + 1 = 26 the whole window, the early
+# exit > max + 2 = 27; cool air < min - 1 = 20, the early exit < min - 2 = 19.
+WARM = ForecastWindow(min_temp=26.5, max_temp=28.0, radiation=0.0)
+HOT = ForecastWindow(min_temp=27.5, max_temp=30.0, radiation=0.0)
+COOLAIR = ForecastWindow(min_temp=15.0, max_temp=19.5, radiation=0.0)
+COLD = ForecastWindow(min_temp=10.0, max_temp=18.5, radiation=0.0)
 
 
 def test_targets_and_start_points() -> None:
@@ -145,6 +147,18 @@ def test_waiting_before_starting() -> None:
     assert d.mode == "heat" and d.reason == "waited"
     sun = ForecastWindow(min_temp=10.0, max_temp=12.0, radiation=300.0)
     assert decide(sit(room=21.0, wait_forecast=sun), S).warmth_coming
+    # The opposite limit counts: exactly max + 1 is not enough, the minimum
+    # of the range is irrelevant.
+    edge = ForecastWindow(min_temp=26.0, max_temp=27.0, radiation=0.0)
+    assert decide(sit(room=21.0, wait_forecast=edge), S).mode == "heat"
+    mild = ForecastWindow(min_temp=23.0, max_temp=24.0, radiation=0.0)  # > 21 + 1
+    assert decide(sit(room=21.0, wait_forecast=mild), S).mode == "heat"
+    edge = ForecastWindow(min_temp=10.0, max_temp=20.0, radiation=0.0)
+    assert decide(sit(room=24.9, wait_forecast=edge), S).mode == "cool"
+    # Heat-only profile: still measured against the period's maximum.
+    assert decide(
+        sit(room=21.0, wait_forecast=WARM, profile_mode="heat"), S
+    ).warmth_coming
     d = decide(sit(room=24.9, wait_forecast=COOLAIR), S)
     assert d.mode == "neutral" and d.free_cooling
     # Back out of the zone: waiting ends.

@@ -251,24 +251,24 @@ def limits(mode: str, low: float, high: float) -> tuple[float | None, float | No
 
 
 def _warm_outside(
-    fc: ForecastWindow | None, low: float | None, margin: float, sun: float
+    fc: ForecastWindow | None, high: float, margin: float, sun: float
 ) -> bool:
+    """Warm enough to heat the room for free: the lowest outside temperature
+    of the window is above the range's maximum + margin, or strong sun."""
     return bool(
         fc is not None
-        and low is not None
         and (
-            (fc.min_temp is not None and fc.min_temp >= low + margin)
+            (fc.min_temp is not None and fc.min_temp > high + margin)
             or (fc.radiation is not None and fc.radiation >= sun)
         )
     )
 
 
-def _cool_outside(fc: ForecastWindow | None, high: float | None, margin: float) -> bool:
+def _cool_outside(fc: ForecastWindow | None, low: float, margin: float) -> bool:
+    """Cool enough to cool the room for free: the highest outside temperature
+    of the window is below the range's minimum - margin."""
     return bool(
-        fc is not None
-        and high is not None
-        and fc.max_temp is not None
-        and fc.max_temp <= high - margin
+        fc is not None and fc.max_temp is not None and fc.max_temp < low - margin
     )
 
 
@@ -315,7 +315,7 @@ def decide(s: Situation, settings: dict) -> Decision:
             and room >= low
             and _warm_outside(
                 s.exit_forecast,
-                low,
+                s.period_high,
                 settings[CONF_EXIT_WARMTH_MARGIN],
                 settings[CONF_EXIT_SUN],
             )
@@ -341,7 +341,9 @@ def decide(s: Situation, settings: dict) -> Decision:
             settings[CONF_EARLY_EXIT]
             and elapsed(gap)
             and room <= high
-            and _cool_outside(s.exit_forecast, high, settings[CONF_EXIT_COOL_MARGIN])
+            and _cool_outside(
+                s.exit_forecast, s.period_low, settings[CONF_EXIT_COOL_MARGIN]
+            )
         ):
             d.mode, d.early_exit = MODE_NEUTRAL, True
             d.drift_until = s.now + settings[CONF_DRIFT_TIME] * 60
@@ -372,10 +374,15 @@ def decide(s: Situation, settings: dict) -> Decision:
     waited = (s.now - s.wait_since) / 60 if s.wait_since is not None else 0.0
     fast = settings[CONF_FAST_TREND]
     max_wait = settings[CONF_MAX_WAIT]
-    d.warmth_forecast = _warm_outside(
-        s.wait_forecast, low, settings[CONF_WARMTH_MARGIN], settings[CONF_SUN_THRESHOLD]
+    d.warmth_forecast = low is not None and _warm_outside(
+        s.wait_forecast,
+        s.period_high,
+        settings[CONF_WARMTH_MARGIN],
+        settings[CONF_SUN_THRESHOLD],
     )
-    d.cool_forecast = _cool_outside(s.wait_forecast, high, settings[CONF_COOL_MARGIN])
+    d.cool_forecast = high is not None and _cool_outside(
+        s.wait_forecast, s.period_low, settings[CONF_COOL_MARGIN]
+    )
     # While drifting after an early exit, the drift itself is the waiting;
     # when it ends, the mode comes back without waiting again.
     d.warmth_coming = (

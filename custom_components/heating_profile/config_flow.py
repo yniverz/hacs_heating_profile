@@ -158,6 +158,8 @@ class HeatingProfileConfigFlow(ConfigFlow, domain=DOMAIN):
     """Create a heating profile. Multiple entries are allowed (one per room)."""
 
     VERSION = 1
+    # 2: the forecast margins count from the opposite limit of the range.
+    MINOR_VERSION = 2
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None

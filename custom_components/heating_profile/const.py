@@ -135,12 +135,12 @@ CONTROL_DEFAULTS: dict[str, float | bool] = {
     CONF_LOCKOUT: 6,  # h between heating and cooling
     CONF_MAX_WAIT: 60,  # min to wait for free warmth/cooling before starting
     CONF_FAST_TREND: 0.3,  # °C per 30 min the wrong way: don't wait
-    CONF_WARMTH_MARGIN: 1.0,  # °C above the minimum outside counts as warmth
-    CONF_COOL_MARGIN: 2.0,  # °C below the maximum outside counts as cool air
+    CONF_WARMTH_MARGIN: 1.0,  # °C: outside above the maximum + this = warmth
+    CONF_COOL_MARGIN: 1.0,  # °C: outside below the minimum - this = cool air
     CONF_SUN_THRESHOLD: 250,  # W/m² mean global radiation
     CONF_EARLY_EXIT: True,
-    CONF_EXIT_WARMTH_MARGIN: 3.0,  # °C above the minimum the whole window
-    CONF_EXIT_COOL_MARGIN: 3.0,  # °C below the maximum the whole window
+    CONF_EXIT_WARMTH_MARGIN: 2.0,  # °C above the maximum the whole window
+    CONF_EXIT_COOL_MARGIN: 2.0,  # °C below the minimum the whole window
     CONF_EXIT_WINDOW: 120,  # min of forecast for the early exit
     CONF_EXIT_SUN: 400,  # W/m² mean global radiation for the early exit
     CONF_DRIFT_MARGIN: 0.3,  # °C the room may drift past the limit after it

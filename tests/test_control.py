@@ -348,7 +348,7 @@ async def test_early_exit_and_drift(hass: HomeAssistant, freezer, control) -> No
     await start_heating(hass, freezer, calls)
     hass.states.async_set(ROOM, "21.4")
     set_power(hass, 140)
-    stub.exit = ForecastWindow(min_temp=24.5, max_temp=28.0, radiation=0.0)
+    stub.exit = ForecastWindow(min_temp=27.5, max_temp=30.0, radiation=0.0)
     await advance(hass, freezer, 29)
     assert st(hass, STATE) == "heating"  # switch gap 30 min
     await advance(hass, freezer, 2)
@@ -367,7 +367,7 @@ async def test_early_exit_and_drift(hass: HomeAssistant, freezer, control) -> No
     await advance(hass, freezer, 45)
     assert st(hass, STATE) == "neutral"
     # Drift time over -> heat mode again right away (no extra waiting).
-    stub.wait = ForecastWindow(min_temp=22.5, max_temp=24.0, radiation=0.0)
+    stub.wait = ForecastWindow(min_temp=26.5, max_temp=28.0, radiation=0.0)
     await advance(hass, freezer, 20)
     assert st(hass, STATE) == "heating"
     assert st(hass, REASON).endswith("sun or warmth didn't come within 60 min")
@@ -382,7 +382,7 @@ async def test_early_exit_room_falls_below_drift(
     await start_heating(hass, freezer, calls)
     hass.states.async_set(ROOM, "21.4")
     set_power(hass, 140)
-    stub.exit = ForecastWindow(min_temp=24.5, max_temp=28.0, radiation=0.0)
+    stub.exit = ForecastWindow(min_temp=27.5, max_temp=30.0, radiation=0.0)
     await advance(hass, freezer, 31)
     assert st(hass, STATE) == "neutral"
     set_ac(hass, "fan_only", 23.5, "silent")
@@ -398,7 +398,7 @@ async def test_waiting_for_warmth(hass: HomeAssistant, freezer, control) -> None
     """Warm enough outside the whole next hour -> wait, at most 60 min."""
     entry, calls = control
     stub = stub_forecast(entry)
-    stub.wait = ForecastWindow(min_temp=22.0, max_temp=23.0, radiation=0.0)
+    stub.wait = ForecastWindow(min_temp=26.5, max_temp=28.0, radiation=0.0)
     hass.states.async_set(ROOM, "21.3")
     await advance(hass, freezer, 32)
     hass.states.async_set(ROOM, "21.1")  # slow: -0.2 in 30 min
@@ -784,7 +784,7 @@ async def test_forecast_used_after_setup(
         json={
             "hourly": {
                 "time": [hour + i * 3600 for i in range(-1, 30)],
-                "temperature_2m": [23.0] * 31,
+                "temperature_2m": [27.0] * 31,
                 "shortwave_radiation": [0.0] * 31,
             }
         },
@@ -797,7 +797,7 @@ async def test_forecast_used_after_setup(
     await advance(hass, freezer, 32)
     hass.states.async_set(ROOM, "21.1")
     await advance(hass, freezer, 10)
-    assert st(hass, STATE) == "waiting"  # 23 °C outside >= 21 + 1
+    assert st(hass, STATE) == "waiting"  # 27 °C outside > 25 + 1
 
 
 async def test_remove_entry_deletes_control_storage(
@@ -845,3 +845,36 @@ async def test_old_and_corrupt_control_storage(
     assert c.state.mode == "neutral" and c.state.mode_since is None
     assert c.state.offset_heat == 2.5 and c.state.offset_cool == 2.0
     assert c.state.last_command is None and c.state.drift_side is None
+
+
+async def test_migrates_old_forecast_margins(
+    hass: HomeAssistant, local_time, freezer
+) -> None:
+    """0.7.0 defaults become the new defaults; own values stay."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Living room",
+        data={},
+        options={
+            **OPTIONS,
+            "warmth_margin": 1.0,
+            "cool_margin": 2.0,
+            "exit_warmth_margin": 3.0,
+            "exit_cool_margin": 4.5,
+        },
+        version=1,
+        minor_version=1,
+    )
+    local_time(12)
+    hass.states.async_set(ROOM, "23.0")
+    set_power(hass, 5)
+    set_ac(hass, "fan_only")
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.minor_version == 2
+    assert entry.options["warmth_margin"] == 1.0
+    assert entry.options["cool_margin"] == 1.0
+    assert entry.options["exit_warmth_margin"] == 2.0
+    assert entry.options["exit_cool_margin"] == 4.5
+    assert entry.state is ConfigEntryState.LOADED

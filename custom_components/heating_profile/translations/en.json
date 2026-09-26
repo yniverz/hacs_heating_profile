@@ -215,15 +215,15 @@
             "data": {
               "max_wait": "Maximum waiting time",
               "fast_trend": "Don't wait when changing this fast",
-              "warmth_margin": "Warmth: outside above the minimum by",
-              "cool_margin": "Cool air: outside below the maximum by",
+              "warmth_margin": "Warmth: outside above the maximum by",
+              "cool_margin": "Cool air: outside below the minimum by",
               "sun_threshold": "Sun: radiation from"
             },
             "data_description": {
               "max_wait": "Longest time to wait instead of starting. Also the length of the forecast window.",
               "fast_trend": "No waiting if the room moves this much per 30 min the wrong way.",
-              "warmth_margin": "Wait instead of heating if it stays at least this much above the minimum outside the whole time.",
-              "cool_margin": "Wait instead of cooling if it stays at least this much below the maximum outside the whole time.",
+              "warmth_margin": "Wait instead of heating if the lowest outside temperature of the window is above the range's maximum plus this.",
+              "cool_margin": "Wait instead of cooling if the highest outside temperature of the window is below the range's minimum minus this.",
               "sun_threshold": "Wait instead of heating if the mean global radiation is at least this high."
             }
           },
@@ -232,8 +232,8 @@
             "description": "Leave heat/cool mode before the AC idles when it gets really warm or cool outside. Meant to be stricter than the waiting rules.",
             "data": {
               "early_exit": "Switch to neutral early",
-              "exit_warmth_margin": "Warm: outside above the minimum by",
-              "exit_cool_margin": "Cool: outside below the maximum by",
+              "exit_warmth_margin": "Warm: outside above the maximum by",
+              "exit_cool_margin": "Cool: outside below the minimum by",
               "exit_window": "Forecast window",
               "exit_sun": "...or sun from",
               "drift_margin": "Room may drift past the limit by",
@@ -241,8 +241,8 @@
             },
             "data_description": {
               "early_exit": "Off: heat/cool mode only ends when the AC idles.",
-              "exit_warmth_margin": "Heat mode ends if it stays at least this much above the minimum outside for the whole forecast window...",
-              "exit_cool_margin": "Cool mode ends if it stays at least this much below the maximum outside for the whole forecast window.",
+              "exit_warmth_margin": "Heat mode ends if the lowest outside temperature of the forecast window is above the range's maximum plus this...",
+              "exit_cool_margin": "Cool mode ends if the highest outside temperature of the forecast window is below the range's minimum minus this.",
               "exit_window": "How far ahead the outside temperature has to stay warm/cool.",
               "exit_sun": "Heat mode also ends if the mean radiation over the window is at least this high.",
               "drift_margin": "After an early switch the room may go this far below the minimum (above the maximum) before the mode starts again.",

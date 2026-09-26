@@ -98,7 +98,7 @@ async def test_full_flow_sets_up_control(hass: HomeAssistant, local_time) -> Non
     schema = result["data_schema"].schema
     defaults = _defaults(schema)
     assert defaults["target_margin"] == 0.3 and defaults["idle_exit"] == 60
-    assert defaults["exit_warmth_margin"] == 3.0 and defaults["exit_window"] == 120
+    assert defaults["exit_warmth_margin"] == 2.0 and defaults["exit_window"] == 120
     assert defaults["idle_hvac_mode"] == "fan_only"
     assert defaults["idle_fan_mode"] == "silent"
     assert defaults["active_fan_mode"] == "auto"

@@ -128,6 +128,30 @@ async def async_setup_entry(
     return True
 
 
+# Old default -> new default of the forecast margins (0.7.0 -> 0.7.1): they
+# now count from the opposite limit of the range. Values set by hand stay.
+_MARGIN_MIGRATION = {
+    "cool_margin": (2.0, 1.0),
+    "exit_warmth_margin": (3.0, 2.0),
+    "exit_cool_margin": (3.0, 2.0),
+}
+
+
+async def async_migrate_entry(
+    hass: HomeAssistant, entry: HeatingProfileConfigEntry
+) -> bool:
+    """Migrate the options of older entries."""
+    if entry.version > 1:
+        return False
+    if entry.minor_version < 2:
+        options = dict(entry.options)
+        for key, (old, new) in _MARGIN_MIGRATION.items():
+            if options.get(key) == old:
+                options[key] = new
+        hass.config_entries.async_update_entry(entry, options=options, minor_version=2)
+    return True
+
+
 async def _async_options_updated(
     hass: HomeAssistant, entry: HeatingProfileConfigEntry
 ) -> None:
