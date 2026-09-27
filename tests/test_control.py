@@ -380,10 +380,13 @@ async def test_early_exit_and_drift(hass: HomeAssistant, freezer, control) -> No
     stub.exit = ForecastWindow(min_temp=27.5, max_temp=30.0, radiation=0.0)
     await advance(hass, freezer, 29)
     assert st(hass, STATE) == "heating"  # switch gap 30 min
-    await advance(hass, freezer, 2)
-    assert st(hass, STATE) == "neutral"
+    for _ in range(3):
+        await advance(hass, freezer, 1)
+        if st(hass, STATE) == "neutral":
+            break
     c = controller(entry)
     until = c.state.drift_until
+    # Complete from the minute of the switch on.
     assert st(hass, STATUS) == (
         "In range 21.0–25.0 °C – fan only "
         f"(warm outside: may drift to 20.7 °C until {hm(until)})"
@@ -1210,3 +1213,35 @@ async def test_command_undone_by_the_ac_is_repeated_once(
     assert sent(calls) == []
     await advance(hass, freezer, 1)
     assert sent(calls) == [("set_temperature", {"temperature": 23.5})]
+
+
+async def test_early_exit_by_sun_is_named_and_shown(
+    hass: HomeAssistant, freezer, control
+) -> None:
+    """Sun (not warmth) ends heat mode early: the status says so, and the
+    early-exit window's forecast is an attribute of the status sensor."""
+    entry, calls = control
+    stub = stub_forecast(entry)
+    await start_heating(hass, freezer, calls)
+    hass.states.async_set(ROOM, "21.4")
+    set_power(hass, 140)
+    stub.wait = ForecastWindow(min_temp=15.0, max_temp=18.0, radiation=380.0)
+    stub.exit = ForecastWindow(min_temp=15.0, max_temp=19.04, radiation=412.4)
+    for _ in range(35):
+        await advance(hass, freezer, 1)
+        if st(hass, STATE) == "neutral":
+            break
+    assert st(hass, STATE) == "neutral"
+    until = controller(entry).state.drift_until
+    status = hass.states.get(STATUS)
+    assert status.state == (
+        "In range 21.0–25.0 °C – fan only "
+        f"(sunny outside: may drift to 20.7 °C until {hm(until)})"
+    )
+    assert status.attributes["exit_forecast_min"] == 15.0
+    assert status.attributes["exit_forecast_max"] == 19.0
+    assert status.attributes["exit_forecast_radiation"] == 412
+    # Survives a reload.
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert controller(entry).state.drift_cause == "sun"

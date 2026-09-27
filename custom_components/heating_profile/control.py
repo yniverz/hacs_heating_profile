@@ -209,6 +209,7 @@ class Decision:
     # hard / no_forecast / fast / waited / drift_over / near
     reason: str = ""
     early_exit: bool = False  # left heat/cool because it gets warm/cool outside
+    exit_cause: str | None = None  # "sun" / "warm" / "cool": why it left early
     drift_until: float | None = None
     drift_side: str | None = None
     heat_zone: bool = False  # neutral and at/below the heating start point
@@ -315,6 +316,14 @@ def decide(s: Situation, settings: dict) -> Decision:
             d.mode, d.early_exit = MODE_NEUTRAL, True
             d.drift_until = s.now + settings[CONF_DRIFT_TIME] * 60
             d.drift_side = MODE_HEAT
+            d.threshold_heat = low - settings[CONF_DRIFT_MARGIN]
+            warm = _warm_outside(
+                s.exit_forecast,
+                s.period_high,
+                settings[CONF_EXIT_WARMTH_MARGIN],
+                float("inf"),
+            )
+            d.exit_cause = "warm" if warm else "sun"
         elif (
             elapsed(settings[CONF_MIN_MODE_TIME] * 60)
             and idle_long
@@ -340,6 +349,8 @@ def decide(s: Situation, settings: dict) -> Decision:
             d.mode, d.early_exit = MODE_NEUTRAL, True
             d.drift_until = s.now + settings[CONF_DRIFT_TIME] * 60
             d.drift_side = MODE_COOL
+            d.threshold_cool = high + settings[CONF_DRIFT_MARGIN]
+            d.exit_cause = "cool"
         elif (
             elapsed(settings[CONF_MIN_MODE_TIME] * 60)
             and idle_long

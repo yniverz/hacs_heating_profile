@@ -275,7 +275,10 @@ mode (e.g. fan only, silent).
 - **Early switch to neutral:** if it stays really warm outside (above the
   maximum + 2 °C for the next 2 h, or sun ≥ 400 W/m²) and the room is at
   least at the minimum. The room may then drift 0.3 °C below the minimum for
-  up to 60 min before heat mode comes back. Cooling mirrored.
+  up to 60 min before heat mode comes back. Cooling mirrored. The status names
+  the cause (sunny / warm outside); the forecast of this 2-h window is in the
+  status sensor's `exit_forecast_*` attributes (the forecast sensors show the
+  1-h waiting window).
 - **Protection:** at least 30 min between neutral and heat/cool, 6 h between
   heating and cooling; 1.5 °C beyond the range switches right away.
 - **Look ahead:** 30 min before a day/night switch (or the end of a manual

@@ -167,6 +167,10 @@ def _hm(ts: float) -> str:
     return dt_util.as_local(dt_util.utc_from_timestamp(ts)).strftime("%H:%M")
 
 
+def _round_or_none(value: float | None, digits: int) -> float | None:
+    return None if value is None else round(value, digits)
+
+
 def _t(value: float | None) -> str:
     return "–" if value is None else f"{value:.1f}"
 
@@ -184,6 +188,7 @@ class ControlState:
     wait_since: float | None = None
     drift_until: float | None = None
     drift_side: str | None = None  # "heat" / "cool": which limit may drift
+    drift_cause: str | None = None  # "sun" / "warm" / "cool": why
     idle_since: float | None = None
     last_command: dict[str, Any] | None = None
     last_command_at: float | None = None
@@ -219,6 +224,8 @@ class ControlState:
             state.mode = MODE_NEUTRAL
         if state.drift_side not in (None, "heat", "cool"):
             state.drift_side = None
+        if state.drift_cause not in (None, "sun", "warm", "cool"):
+            state.drift_cause = None
         if state.phase not in (None, PHASE_RUN, PHASE_REST):
             state.phase = None
         cmd = state.last_command
@@ -756,7 +763,7 @@ class ClimateController:
             self._switch_mode(d, room, trend, ahead, now)
         st.wait_since = d.wait_since if d.mode == MODE_NEUTRAL else None
         if d.mode == MODE_NEUTRAL and d.drift_until is None:
-            st.drift_until = st.drift_side = None
+            st.drift_until = st.drift_side = st.drift_cause = None
 
         # Layer 2: target and setpoint.
         target = (
@@ -811,7 +818,17 @@ class ClimateController:
         await self._async_send(want, ac_state)
 
         self.view = self._build_view(
-            d, room, trend, wait_fc, target, setpoint, ahead, active, power, (low, high)
+            d,
+            room,
+            trend,
+            wait_fc,
+            exit_fc,
+            target,
+            setpoint,
+            ahead,
+            active,
+            power,
+            (low, high),
         )
         self._save()
 
@@ -835,8 +852,9 @@ class ClimateController:
             st.reason, st.reason_since = "", None
         if d.early_exit:
             st.drift_until, st.drift_side = d.drift_until, d.drift_side
+            st.drift_cause = d.exit_cause
         else:
-            st.drift_until = st.drift_side = None
+            st.drift_until = st.drift_side = st.drift_cause = None
         _LOGGER.debug("Mode %s -> %s (%s)", st.mode, d.mode, st.reason)
         st.mode = d.mode
         st.mode_since = now
@@ -1129,6 +1147,7 @@ class ClimateController:
         room: float | None,
         trend: float,
         fc: ForecastWindow | None,
+        exit_fc: ForecastWindow | None,
         target: float | None,
         setpoint: float | None,
         ahead: str | None,
@@ -1208,7 +1227,9 @@ class ClimateController:
             if st.drift_until is not None and st.drift_side in ("heat", "cool"):
                 heat = st.drift_side == "heat"
                 limit = d.threshold_heat if heat else d.threshold_cool
-                weather = "warm" if heat else "cool"
+                weather = {"sun": "sunny", "warm": "warm", "cool": "cool"}.get(
+                    st.drift_cause or "", "warm" if heat else "cool"
+                )
                 status += (
                     f" ({weather} outside: may drift to {_t(limit)} °C "
                     f"until {_hm(st.drift_until)})"
@@ -1231,6 +1252,10 @@ class ClimateController:
             "warmth_coming": d.warmth_coming,
             "free_cooling": d.free_cooling,
             "look_ahead": ahead,
+            # The early-exit window (the forecast sensors show the waiting one).
+            "exit_forecast_min": _round_or_none(exit_fc and exit_fc.min_temp, 1),
+            "exit_forecast_max": _round_or_none(exit_fc and exit_fc.max_temp, 1),
+            "exit_forecast_radiation": _round_or_none(exit_fc and exit_fc.radiation, 0),
             "anti_short_cycle": st.anti_short_cycle,
             "cycle_phase": st.phase,
         }
