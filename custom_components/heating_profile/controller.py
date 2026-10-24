@@ -65,6 +65,7 @@ from .const import (
     CONF_CYCLE_MIN_REST,
     CONF_CYCLE_MIN_RUN,
     CONF_CYCLE_REST_COOL,
+    CONF_CYCLE_REST_FAN,
     CONF_CYCLE_REST_HEAT,
     CONF_CYCLE_RUN_MARGIN,
     CONF_DRIFT_TIME,
@@ -807,7 +808,20 @@ class ClimateController:
                 setpoint = self._setpoint(target + st.offset_heat, attrs)
             else:
                 setpoint = self._setpoint(target - st.offset_cool, attrs)
-            want = self._ac_tuple("heat" if heating else "cool", setpoint, fan)
+            if (
+                st.anti_short_cycle
+                and st.phase == PHASE_REST
+                and s[CONF_CYCLE_REST_FAN]
+            ):
+                # Some ACs heat (cool) at any setpoint in heat (cool) mode,
+                # e.g. with a built-in heating compensation: rest in the
+                # neutral mode so the compressor surely stays off.
+                setpoint = None
+                want = self._ac_tuple(
+                    s[CONF_IDLE_HVAC_MODE], None, s[CONF_STANDBY_FAN_MODE]
+                )
+            else:
+                want = self._ac_tuple("heat" if heating else "cool", setpoint, fan)
         else:
             want = self._ac_tuple(s[CONF_IDLE_HVAC_MODE], None, s[CONF_IDLE_FAN_MODE])
         if target is None or self.profile.hvac_mode == HVAC_MODE_OFF:
@@ -1134,7 +1148,12 @@ class ClimateController:
             until = st.phase_since + s[CONF_CYCLE_MIN_RUN] * 60
             extra = "at least until"
         else:
-            text = f"resting, runs again at {_t(start)} °C"
+            how = s[CONF_IDLE_HVAC_MODE].replace("_", " ")
+            text = (
+                f"resting with {how}, runs again at {_t(start)} °C"
+                if s[CONF_CYCLE_REST_FAN]
+                else f"resting, runs again at {_t(start)} °C"
+            )
             until = st.phase_since + s[CONF_CYCLE_MIN_REST] * 60
             extra = "not before"
         if dt_util.utcnow().timestamp() < until:

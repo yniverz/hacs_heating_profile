@@ -1045,7 +1045,7 @@ async def test_fan_speed_sensor_waits_for_the_fan_to_stop(
 
 
 async def test_anti_short_cycle(hass: HomeAssistant, freezer, control) -> None:
-    """Long runs (room + margin) and rests (17 °C), minimum times."""
+    """Long runs (room + margin) and rests with fan only, minimum times."""
     entry, calls = control
     c = controller(entry)
     cycle_switch = "switch.living_room_anti_short_cycle"
@@ -1087,26 +1087,34 @@ async def test_anti_short_cycle(hass: HomeAssistant, freezer, control) -> None:
     assert dt_util.utcnow().timestamp() - run_start == 19 * 60
     await advance(hass, freezer, 1)
     assert c.state.phase == "rest"
+    # Rest: the neutral mode with the compressor-off fan, so an AC that heats
+    # at any setpoint in heat mode surely stays off.
     assert sent(calls) == [
-        ("set_temperature", {"temperature": 27.0}),  # followed the room
-        ("set_temperature", {"temperature": 17.0}),  # rest
+        ("set_hvac_mode", {"hvac_mode": "fan_only"}),
+        ("set_temperature", {"temperature": 27.0}),  # followed the room before
+        ("set_fan_mode", {"fan_mode": "silent"}),
     ]
-    set_ac(hass, "heat", 17.0, "auto")
+    set_ac(hass, "fan_only", 27.0, "silent")
     rest_start = c.state.phase_since
     assert st(hass, STATUS) == (
-        f"Heating – resting, runs again at 21.1 °C (not before {hm(rest_start + 900)})"
+        "Heating – resting with fan only, runs again at 21.1 °C "
+        f"(not before {hm(rest_start + 900)})"
     )
-    set_power(hass, 5)  # the compressor stops: standby fan
+    assert st(hass, STATE) == "heating"  # still heat mode for the control
+    set_power(hass, 5)  # the compressor stops: nothing more to send
     await hass.async_block_till_done()
-    assert sent(calls) == [("set_fan_mode", {"fan_mode": "silent"})]
-    set_ac(hass, "heat", 17.0, "silent")
+    assert sent(calls) == []
     # Back at the start point, but the rest lasts at least 15 min.
     hass.states.async_set(ROOM, "21.0")
     await advance(hass, freezer, 14)
     assert c.state.phase == "rest" and sent(calls) == []
     await advance(hass, freezer, 1)
     assert c.state.phase == "run"
-    assert sent(calls) == [("set_temperature", {"temperature": 26.0})]
+    assert sent(calls) == [
+        ("set_hvac_mode", {"hvac_mode": "heat"}),
+        ("set_temperature", {"temperature": 26.0}),
+        ("set_fan_mode", {"fan_mode": "silent"}),  # sent with every mode change
+    ]
     set_ac(hass, "heat", 26.0, "silent")
     # Nothing was learned meanwhile.
     assert c.state.offset_heat == 2.0
@@ -1124,9 +1132,11 @@ async def test_anti_short_cycle(hass: HomeAssistant, freezer, control) -> None:
 async def test_anti_short_cycle_cooling_and_reset(
     hass: HomeAssistant, freezer, control
 ) -> None:
-    """Cooling: room - margin, rest at the highest setpoint; neutral resets."""
+    """Cooling: room - margin; without fan-only rests the AC stays in cool
+    mode and rests at a high setpoint; neutral resets."""
     entry, calls = control
     c = controller(entry)
+    c.settings["cycle_rest_fan"] = False
     await c.async_set_anti_short_cycle(True)
     hass.states.async_set(ROOM, "24.9")
     await advance(hass, freezer, 12)

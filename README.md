@@ -319,7 +319,14 @@ no longer lets the AC hold a setpoint (layer 1 stays the same).
 | Phase | AC gets | Ends when |
 | --- | --- | --- |
 | Run | room + 5 °C (cooling: − 5 °C); within a run it only moves further | the room reaches the minimum + 0.8 °C (cooling: maximum − 0.8 °C), after at least 20 min; at once at the maximum |
-| Rest | 17 °C (cooling: 30 °C), a setpoint the AC accepts; the fan follows *compressor off* | the room is back at the minimum + 0.1 °C (cooling: maximum − 0.1 °C), after at least 15 min; at once at the hard limit |
+| Rest | *Mode while neutral* (usually fan only) with the *compressor off* fan | the room is back at the minimum + 0.1 °C (cooling: maximum − 0.1 °C), after at least 15 min; at once at the hard limit |
+
+Resting in fan only keeps the compressor off for sure: some ACs heat at any
+setpoint in heat mode (e.g. a built-in heating compensation that makes
+"17 °C" mean about 20 °C at their sensor). For the control it is still heat
+(cool) mode. With *Rest with fan only* off, the AC stays in heat/cool mode
+during a rest and gets 17 °C (cooling: 30 °C) instead, with the fan following
+*compressor off*.
 
 The room is averaged over 5 min for this. Learning is paused while the switch
 is on; leaving heat/cool mode (e.g. after 60 idle minutes in a long rest)
@@ -345,6 +352,13 @@ For a profile called `Living room`:
 | diagnostic sensors (disabled by default) | room average, room trend, forecast outside minimum/maximum and radiation for the next waiting window, AC setpoint, waiting until, paused until |
 
 ## Upgrading
+
+### From 0.8.x
+
+With *Anti short cycle* on, a rest now switches the AC to *Mode while
+neutral* (usually fan only) instead of a low setpoint in heat/cool mode. For
+the old behaviour turn off *Rest with fan only* in *Configure* (anti short
+cycle section). Without anti short cycle nothing changes.
 
 ### From 0.7.3
 

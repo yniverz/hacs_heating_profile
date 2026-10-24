@@ -129,6 +129,7 @@ CONF_CYCLE_MIN_RUN = "cycle_min_run"
 CONF_CYCLE_MIN_REST = "cycle_min_rest"
 CONF_CYCLE_RUN_MARGIN = "cycle_run_margin"
 CONF_CYCLE_AVERAGE = "cycle_average"
+CONF_CYCLE_REST_FAN = "cycle_rest_fan"
 CONF_CYCLE_REST_HEAT = "cycle_rest_heat"
 CONF_CYCLE_REST_COOL = "cycle_rest_cool"
 
@@ -180,7 +181,11 @@ CONTROL_DEFAULTS: dict[str, float | bool] = {
     CONF_CYCLE_MIN_REST: 15,  # min
     CONF_CYCLE_RUN_MARGIN: 5.0,  # °C: setpoint while running = room +/- this
     CONF_CYCLE_AVERAGE: 5,  # min room average for the run/rest decision
-    # °C the AC gets while resting; many ACs don't take less than 17 in heat
+    # Rest in the neutral mode (fan only): some ACs heat (cool) in heat (cool)
+    # mode at any setpoint, e.g. with a built-in heating compensation.
+    CONF_CYCLE_REST_FAN: True,
+    # °C the AC gets while resting without fan only; many ACs don't take
+    # less than 17 in heat
     # mode (they correct it, which would look like a manual change).
     CONF_CYCLE_REST_HEAT: 17.0,
     CONF_CYCLE_REST_COOL: 30.0,

@@ -30,6 +30,7 @@ from .const import (
     CONF_CYCLE_MIN_REST,
     CONF_CYCLE_MIN_RUN,
     CONF_CYCLE_REST_COOL,
+    CONF_CYCLE_REST_FAN,
     CONF_CYCLE_REST_HEAT,
     CONF_CYCLE_RUN_MARGIN,
     CONF_CYCLE_STOP_MARGIN,
@@ -125,7 +126,7 @@ NUMBERS: dict[str, tuple[float, float, float, str]] = {
     CONF_AVERAGE_WINDOW: (1, 60, 1, "min"),
     CONF_TREND_WINDOW: (5, 180, 5, "min"),
 }
-BOOLEANS = (CONF_EARLY_EXIT, CONF_AUTO_TUNE)
+BOOLEANS = (CONF_EARLY_EXIT, CONF_AUTO_TUNE, CONF_CYCLE_REST_FAN)
 
 SECTIONS: dict[str, tuple[str, ...]] = {
     "ac_modes": (
@@ -176,6 +177,7 @@ SECTIONS: dict[str, tuple[str, ...]] = {
         CONF_CYCLE_MIN_RUN,
         CONF_CYCLE_MIN_REST,
         CONF_CYCLE_RUN_MARGIN,
+        CONF_CYCLE_REST_FAN,
         CONF_CYCLE_REST_HEAT,
         CONF_CYCLE_REST_COOL,
         CONF_CYCLE_AVERAGE,
