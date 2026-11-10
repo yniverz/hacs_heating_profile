@@ -175,13 +175,17 @@
               "idle_hvac_mode": "Mode while neutral",
               "idle_fan_mode": "Fan while neutral",
               "active_fan_mode": "Fan while heating/cooling",
-              "standby_fan_mode": "Fan while heating/cooling, compressor off"
+              "standby_fan_mode": "Fan while heating/cooling, compressor off",
+              "transition_fan_mode": "Fan after heating/cooling",
+              "transition_time": "Fan after heating/cooling for"
             },
             "data_description": {
               "idle_hvac_mode": "Usually fan only.",
               "idle_fan_mode": "Fan mode while neutral.",
               "active_fan_mode": "Fan mode in heat and cool mode while the compressor runs.",
-              "standby_fan_mode": "Fan mode in heat and cool mode while the compressor is off, so the air keeps moving. Taken from the compressor sensor, or else the power sensor below \"AC working from\" (learning section)."
+              "standby_fan_mode": "Fan mode in heat and cool mode while the compressor is off, so the air keeps moving. Taken from the compressor sensor, or else the power sensor below \"AC working from\" (learning section).",
+              "transition_fan_mode": "When the AC switches from heat or cool mode to \"Mode while neutral\" (also a fan-only rest of the anti short cycle), it first gets this fan, e.g. to blow out the warm/cold coil, then its normal fan.",
+              "transition_time": "How long the fan above is used after heat/cool mode. 0 turns it off."
             }
           },
           "targets": {

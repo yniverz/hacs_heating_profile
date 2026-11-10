@@ -1255,3 +1255,58 @@ async def test_early_exit_by_sun_is_named_and_shown(
     assert await hass.config_entries.async_reload(entry.entry_id)
     await hass.async_block_till_done()
     assert controller(entry).state.drift_cause == "sun"
+
+
+TRANSITION = {**OPTIONS, "transition_time": 5, "transition_fan_mode": "low"}
+
+
+async def test_transition_fan_after_heating(
+    hass: HomeAssistant, local_time, freezer
+) -> None:
+    """Heat -> neutral: the transition fan for 5 min, then the neutral fan."""
+    entry, calls = await setup_control(hass, local_time, freezer, TRANSITION)
+    await start_heating(hass, freezer, calls)
+    # The profile no longer heats: neutral right away.
+    await set_profile_mode(hass, entry, "cool")
+    assert st(hass, STATE) == "neutral"
+    assert sent(calls) == [
+        ("set_hvac_mode", {"hvac_mode": "fan_only"}),
+        ("set_fan_mode", {"fan_mode": "low"}),
+    ]
+    set_ac(hass, "fan_only", 23.5, "low")
+    await advance(hass, freezer, 4)
+    assert sent(calls) == []
+    await advance(hass, freezer, 1)
+    assert sent(calls) == [("set_fan_mode", {"fan_mode": "silent"})]
+    set_ac(hass, "fan_only", 23.5, "silent")
+    assert controller(entry).state.transition_until is None
+    # Staying neutral doesn't start it again.
+    await advance(hass, freezer, 10)
+    assert sent(calls) == []
+
+
+async def test_transition_fan_in_fan_only_rest(
+    hass: HomeAssistant, local_time, freezer
+) -> None:
+    """Anti short cycle: a fan-only rest also starts with the transition fan."""
+    entry, calls = await setup_control(hass, local_time, freezer, TRANSITION)
+    c = controller(entry)
+    await c.async_set_anti_short_cycle(True)
+    hass.states.async_set(ROOM, "21.0")
+    await advance(hass, freezer, 10)
+    assert c.state.phase == "run"
+    sent(calls)
+    set_ac(hass, "heat", 26.0, "auto")
+    set_power(hass, 600)
+    hass.states.async_set(ROOM, "22.0")
+    await advance(hass, freezer, 20)
+    assert c.state.phase == "rest"
+    calls_now = sent(calls)
+    assert ("set_hvac_mode", {"hvac_mode": "fan_only"}) in calls_now
+    assert calls_now[-1] == ("set_fan_mode", {"fan_mode": "low"})
+    set_ac(hass, "fan_only", 27.0, "low")
+    set_power(hass, 5)
+    await advance(hass, freezer, 4)
+    assert sent(calls) == []
+    await advance(hass, freezer, 1)
+    assert sent(calls) == [("set_fan_mode", {"fan_mode": "silent"})]

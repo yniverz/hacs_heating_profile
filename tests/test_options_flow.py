@@ -63,7 +63,13 @@ def test_every_setting_has_a_default_label_and_description() -> None:
     """Sections, defaults, number ranges and translations fit together."""
     keys = [k for keys in SECTIONS.values() for k in keys]
     assert len(keys) == len(set(keys))
-    modes = {"idle_hvac_mode", "idle_fan_mode", "active_fan_mode", "standby_fan_mode"}
+    modes = {
+        "idle_hvac_mode",
+        "idle_fan_mode",
+        "active_fan_mode",
+        "standby_fan_mode",
+        "transition_fan_mode",
+    }
     assert set(keys) - modes == set(CONTROL_DEFAULTS) - {"use_forecast"}
     for key, value in CONTROL_DEFAULTS.items():
         if key in NUMBERS:

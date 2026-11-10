@@ -251,7 +251,10 @@ are removed, the other settings are kept.
 The control works in two layers and lets the AC modulate by itself:
 
 **1. Mode (neutral / heat / cool), changed rarely.** Neutral runs the idle
-mode (e.g. fan only, silent).
+mode (e.g. fan only, silent). Optionally, right after heat or cool mode it
+first gets *Fan after heating/cooling* (e.g. low) for a few minutes, then its
+normal fan; this also applies to the fan-only rests of the anti short cycle.
+Off by default (0 min).
 
 | Profile mode | Modes used |
 | --- | --- |
@@ -352,6 +355,11 @@ For a profile called `Living room`:
 | diagnostic sensors (disabled by default) | room average, room trend, forecast outside minimum/maximum and radiation for the next waiting window, AC setpoint, waiting until, paused until |
 
 ## Upgrading
+
+### From 0.9.x
+
+New settings *Fan after heating/cooling* and *…for* in *Configure* (AC modes
+section). Off by default (0 min); nothing changes until you set a time.
 
 ### From 0.8.x
 

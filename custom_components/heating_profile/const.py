@@ -79,6 +79,8 @@ CONF_IDLE_HVAC_MODE = "idle_hvac_mode"
 CONF_IDLE_FAN_MODE = "idle_fan_mode"
 CONF_ACTIVE_FAN_MODE = "active_fan_mode"
 CONF_STANDBY_FAN_MODE = "standby_fan_mode"
+CONF_TRANSITION_FAN_MODE = "transition_fan_mode"
+CONF_TRANSITION_TIME = "transition_time"
 
 # Targets
 CONF_TARGET_MARGIN = "target_margin"
@@ -176,6 +178,8 @@ CONTROL_DEFAULTS: dict[str, float | bool] = {
     CONF_OFFSET_STEP: 0.5,  # °C largest change per learning step
     CONF_ACTIVE_POWER: 50,  # W: the AC is working
     CONF_HIGH_POWER: 200,  # W: the AC works hard (warm-up, not learned)
+    # min the neutral mode first gets the transition fan after heat/cool (0: off)
+    CONF_TRANSITION_TIME: 0,
     CONF_CYCLE_STOP_MARGIN: 0.8,  # °C: a run heats to min + this (cools max - this)
     CONF_CYCLE_MIN_RUN: 20,  # min
     CONF_CYCLE_MIN_REST: 15,  # min
@@ -198,6 +202,7 @@ DEFAULT_IDLE_HVAC_MODE = "fan_only"
 DEFAULT_IDLE_FAN_MODE = "silent"
 DEFAULT_ACTIVE_FAN_MODE = "auto"
 DEFAULT_STANDBY_FAN_MODE = "silent"
+DEFAULT_TRANSITION_FAN_MODE = "low"
 DEFAULT_OFFSET = 2.0
 
 # Control states (sensor "Control state")

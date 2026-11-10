@@ -84,6 +84,8 @@ from .const import (
     CONF_POWER_SENSOR,
     CONF_ROOM_SENSOR,
     CONF_STANDBY_FAN_MODE,
+    CONF_TRANSITION_FAN_MODE,
+    CONF_TRANSITION_TIME,
     CONF_TREND_WINDOW,
     CONF_USE_FORECAST,
     CONF_WARMTH_MARGIN,
@@ -96,10 +98,13 @@ from .const import (
     DEFAULT_IDLE_HVAC_MODE,
     DEFAULT_OFFSET,
     DEFAULT_STANDBY_FAN_MODE,
+    DEFAULT_TRANSITION_FAN_MODE,
     DOMAIN,
     FORECAST_INTERVAL_MINUTES,
     FORECAST_MAX_AGE_HOURS,
     FORECAST_URL,
+    HVAC_MODE_COOL,
+    HVAC_MODE_HEAT,
     HVAC_MODE_OFF,
     MODE_COOL,
     MODE_HEAT,
@@ -158,6 +163,7 @@ def control_settings(options: dict[str, Any]) -> dict[str, Any]:
             CONF_IDLE_FAN_MODE: DEFAULT_IDLE_FAN_MODE,
             CONF_ACTIVE_FAN_MODE: DEFAULT_ACTIVE_FAN_MODE,
             CONF_STANDBY_FAN_MODE: DEFAULT_STANDBY_FAN_MODE,
+            CONF_TRANSITION_FAN_MODE: DEFAULT_TRANSITION_FAN_MODE,
         }
     )
     settings.update({k: v for k, v in options.items() if v is not None})
@@ -208,6 +214,8 @@ class ControlState:
     phase: str | None = None
     phase_since: float | None = None
     run_setpoint: float | None = None
+    # The neutral mode gets the transition fan until then (after heat/cool).
+    transition_until: float | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ControlState:
@@ -829,6 +837,7 @@ class ClimateController:
             self._reset_cycle()
         elif not st.anti_short_cycle:
             self._reset_cycle()
+        want = self._transition_fan(want, now)
         await self._async_send(want, ac_state)
 
         self.view = self._build_view(
@@ -967,6 +976,21 @@ class ClimateController:
             setpoint = pick(setpoint, st.run_setpoint)
         st.run_setpoint = setpoint
         return setpoint
+
+    def _transition_fan(self, want: dict[str, Any], now: float) -> dict[str, Any]:
+        """Right after heat/cool, the neutral mode (also a fan-only rest)
+        first gets the transition fan for a while, then its own fan."""
+        st, s = self.state, self.settings
+        if want["mode"] != s[CONF_IDLE_HVAC_MODE] or s[CONF_TRANSITION_TIME] <= 0:
+            st.transition_until = None
+            return want
+        last = st.last_command
+        if last is not None and last["mode"] in (HVAC_MODE_HEAT, HVAC_MODE_COOL):
+            st.transition_until = now + s[CONF_TRANSITION_TIME] * 60
+        if st.transition_until is not None and now < st.transition_until:
+            return {**want, "fan": s[CONF_TRANSITION_FAN_MODE]}
+        st.transition_until = None
+        return want
 
     def _setpoint(self, value: float, attrs: dict[str, Any]) -> float:
         def num(key: str, default: float) -> float:

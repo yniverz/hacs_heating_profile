@@ -69,6 +69,8 @@ from .const import (
     CONF_SUN_THRESHOLD,
     CONF_SWITCH_GAP,
     CONF_TARGET_MARGIN,
+    CONF_TRANSITION_FAN_MODE,
+    CONF_TRANSITION_TIME,
     CONF_TREND_WINDOW,
     CONF_USE_FORECAST,
     CONF_WARMTH_MARGIN,
@@ -78,6 +80,7 @@ from .const import (
     DEFAULT_IDLE_HVAC_MODE,
     DEFAULT_NAME,
     DEFAULT_STANDBY_FAN_MODE,
+    DEFAULT_TRANSITION_FAN_MODE,
     DOMAIN,
     SOURCE_KEYS,
 )
@@ -114,6 +117,7 @@ NUMBERS: dict[str, tuple[float, float, float, str]] = {
     CONF_OFFSET_STEP: (0.1, 2.0, 0.1, "°C"),
     CONF_ACTIVE_POWER: (1, 2000, 5, "W"),
     CONF_HIGH_POWER: (1, 5000, 10, "W"),
+    CONF_TRANSITION_TIME: (0, 60, 1, "min"),
     CONF_CYCLE_STOP_MARGIN: (0.2, 5.0, 0.1, "°C"),
     CONF_CYCLE_MIN_RUN: (0, 120, 5, "min"),
     CONF_CYCLE_MIN_REST: (0, 120, 5, "min"),
@@ -134,6 +138,8 @@ SECTIONS: dict[str, tuple[str, ...]] = {
         CONF_IDLE_FAN_MODE,
         CONF_ACTIVE_FAN_MODE,
         CONF_STANDBY_FAN_MODE,
+        CONF_TRANSITION_FAN_MODE,
+        CONF_TRANSITION_TIME,
     ),
     "targets": (
         CONF_TARGET_MARGIN,
@@ -317,6 +323,7 @@ class HeatingProfileOptionsFlow(OptionsFlow):
             CONF_IDLE_FAN_MODE: DEFAULT_IDLE_FAN_MODE,
             CONF_ACTIVE_FAN_MODE: DEFAULT_ACTIVE_FAN_MODE,
             CONF_STANDBY_FAN_MODE: DEFAULT_STANDBY_FAN_MODE,
+            CONF_TRANSITION_FAN_MODE: DEFAULT_TRANSITION_FAN_MODE,
             **CONTROL_DEFAULTS,
             **self.config_entry.options,
         }
@@ -351,7 +358,12 @@ class HeatingProfileOptionsFlow(OptionsFlow):
             marker = vol.Required(key, default=current.get(key))
             if key == CONF_IDLE_HVAC_MODE:
                 return marker, _select(idle_modes)
-            if key in (CONF_IDLE_FAN_MODE, CONF_ACTIVE_FAN_MODE, CONF_STANDBY_FAN_MODE):
+            if key in (
+                CONF_IDLE_FAN_MODE,
+                CONF_ACTIVE_FAN_MODE,
+                CONF_STANDBY_FAN_MODE,
+                CONF_TRANSITION_FAN_MODE,
+            ):
                 return marker, _select(fan_modes)
             if key in BOOLEANS:
                 return marker, selector.BooleanSelector()
