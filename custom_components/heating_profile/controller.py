@@ -49,6 +49,7 @@ from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
 )
+from homeassistant.helpers.start import async_at_started
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
@@ -392,7 +393,12 @@ class ClimateController:
             self.view = ControlView(state=CONTROL_UNAVAILABLE, status="Starting")
         self._record_room(self.hass.states.get(self.room_sensor))
         hass = self.hass
+        # After a (re)start the AC's integration may still switch from a
+        # restored state to the real one: settle like after it (re)appeared,
+        # from now and again once Home Assistant has fully started.
+        self._async_ac_settling()
         self._unsubs += [
+            async_at_started(hass, callback(lambda _hass: self._async_ac_settling())),
             async_track_state_change_event(
                 hass, [self.room_sensor], self._async_room_changed
             ),
@@ -424,6 +430,13 @@ class ClimateController:
             hass.async_create_task(self._async_first_forecast(), f"{DOMAIN} forecast")
         else:
             self._schedule_evaluate()
+
+    @callback
+    def _async_ac_settling(self) -> None:
+        """The AC's state may still settle: its changes for a while aren't
+        manual, and the command goes out again even if sent recently."""
+        self._ac_back_at = dt_util.utcnow().timestamp()
+        self.state.last_command_at = None
 
     async def _async_first_forecast(self) -> None:
         assert self.forecast is not None
@@ -622,8 +635,7 @@ class ClimateController:
             # The AC (re)appeared, e.g. its integration started after Home
             # Assistant: send what it should do right away, even if that was
             # sent recently (it may not have reached the AC).
-            self._ac_back_at = now
-            self.state.last_command_at = None
+            self._async_ac_settling()
             self._schedule_evaluate()
             return
         if not self.state.enabled or self.state.last_command is None:

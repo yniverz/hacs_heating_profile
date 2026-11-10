@@ -313,9 +313,10 @@ an AC that sends its whole state with every change doesn't undo them. The same
 command is repeated at most every 10 min, once right away if the AC showed it
 and then undid it by itself.
 Room sensor unavailable: neutral. AC unavailable: nothing is sent. When the
-AC (re)appears, e.g. because its integration starts after Home Assistant, the
-command is sent again right away, and for 2 min its changes aren't taken as
-manual (integrations often report a default state first). A command the AC's
+AC (re)appears, e.g. because its integration starts after Home Assistant, and
+after a (re)start of the control or of Home Assistant, the command is sent
+again right away, and for 2 min the AC's changes aren't taken as manual
+(integrations often report a default or restored state first). A command the AC's
 integration doesn't finish within 30 s is given up and repeated later, so an
 AC that isn't reachable yet can't block the control.
 
@@ -360,6 +361,12 @@ For a profile called `Living room`:
 | diagnostic sensors (disabled by default) | room average, room trend, forecast outside minimum/maximum and radiation for the next waiting window, AC setpoint, waiting until, paused until |
 
 ## Upgrading
+
+### From 0.10.1
+
+Fix: after a restart of Home Assistant the control could pause itself
+("manual change on the AC") when the AC's integration switched from its
+restored state to the real one. Nothing to change.
 
 ### From 0.10.0
 

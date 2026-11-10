@@ -1388,3 +1388,28 @@ async def test_ac_reconnecting_is_not_a_manual_change(
     set_ac(hass, "heat", 25.0, "auto")
     await hass.async_block_till_done()
     assert controller(entry).state.pause_until is not None
+
+
+async def test_restart_with_the_ac_already_there_is_not_a_manual_change(
+    hass: HomeAssistant, freezer, control
+) -> None:
+    """After a restart the AC entity is there with a restored state, and its
+    integration then reports the real one: no pause, the command goes out."""
+    entry, calls = control
+    await start_heating(hass, freezer, calls)
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    sent(calls)
+    # The AC's integration connects and reports the AC's real state.
+    freezer.tick(timedelta(seconds=100))
+    set_ac(hass, "off", 20.0, "silent")
+    await hass.async_block_till_done()
+    c = controller(entry)
+    assert c.state.pause_until is None
+    assert ("set_hvac_mode", {"hvac_mode": "heat"}) in sent(calls)
+    set_ac(hass, "heat", 23.5, "auto")
+    # Later, a change on the AC is a manual change again.
+    freezer.tick(timedelta(seconds=200))
+    set_ac(hass, "heat", 25.0, "auto")
+    await hass.async_block_till_done()
+    assert c.state.pause_until is not None
