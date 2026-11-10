@@ -244,6 +244,13 @@ RESEND_INTERVAL_SECONDS = 600
 # known state with every change, so a fan mode sent too early would carry the
 # old mode and target temperature and undo them.
 CONFIRM_TIMEOUT_SECONDS = 10.0
+# A service call to the AC that takes longer is given up (and the command
+# repeated later); an integration that can't reach its device yet may never
+# return, which would block the control until a reload.
+SERVICE_CALL_TIMEOUT_SECONDS = 30.0
+# After the AC (re)appears, its integration may report a few states (e.g. a
+# default "off", then the real state) before it settles: not manual changes.
+AC_SETTLE_SECONDS = 120
 FORECAST_INTERVAL_MINUTES = 30
 FORECAST_MAX_AGE_HOURS = 3
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"

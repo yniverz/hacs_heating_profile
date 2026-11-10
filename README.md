@@ -312,7 +312,12 @@ one after another, each once the AC shows the previous one (at most 10 s), so
 an AC that sends its whole state with every change doesn't undo them. The same
 command is repeated at most every 10 min, once right away if the AC showed it
 and then undid it by itself.
-Room sensor unavailable: neutral. AC unavailable: nothing is sent.
+Room sensor unavailable: neutral. AC unavailable: nothing is sent. When the
+AC (re)appears, e.g. because its integration starts after Home Assistant, the
+command is sent again right away, and for 2 min its changes aren't taken as
+manual (integrations often report a default state first). A command the AC's
+integration doesn't finish within 30 s is given up and repeated later, so an
+AC that isn't reachable yet can't block the control.
 
 **Anti short cycle (switch).** For an AC that is too big for the room and
 keeps switching its compressor on and off: while the switch is on, the
@@ -355,6 +360,12 @@ For a profile called `Living room`:
 | diagnostic sensors (disabled by default) | room average, room trend, forecast outside minimum/maximum and radiation for the next waiting window, AC setpoint, waiting until, paused until |
 
 ## Upgrading
+
+### From 0.10.0
+
+Fix: if the AC's integration started after Home Assistant, the control could
+stay stuck (or pause as if the AC was changed by hand) until the integration
+was reloaded. Nothing to change.
 
 ### From 0.9.x
 

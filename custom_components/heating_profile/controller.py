@@ -53,6 +53,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    AC_SETTLE_SECONDS,
     CONF_AC,
     CONF_ACTIVE_FAN_MODE,
     CONF_ACTIVE_POWER,
@@ -114,6 +115,7 @@ from .const import (
     PHASE_RUN,
     RESEND_INTERVAL_SECONDS,
     SAVE_DELAY,
+    SERVICE_CALL_TIMEOUT_SECONDS,
     STATE_COOLING,
     STATE_DISABLED,
     STATE_HEATING,
@@ -377,6 +379,8 @@ class ClimateController:
         # The AC undid the last command by itself; it is repeated once.
         self._undone = False
         self._retried = False
+        # When the AC last (re)appeared; its next states may still settle.
+        self._ac_back_at: float | None = None
 
     # ----- lifecycle -------------------------------------------------------
 
@@ -608,9 +612,22 @@ class ClimateController:
     @callback
     def _async_ac_changed(self, event: Event[EventStateChangedData]) -> None:
         old, new = event.data["old_state"], event.data["new_state"]
+        bad = (STATE_UNAVAILABLE, STATE_UNKNOWN)
+        now = dt_util.utcnow().timestamp()
+        if (
+            new is not None
+            and new.state not in bad
+            and (old is None or old.state in bad)
+        ):
+            # The AC (re)appeared, e.g. its integration started after Home
+            # Assistant: send what it should do right away, even if that was
+            # sent recently (it may not have reached the AC).
+            self._ac_back_at = now
+            self.state.last_command_at = None
+            self._schedule_evaluate()
+            return
         if not self.state.enabled or self.state.last_command is None:
             return
-        bad = (STATE_UNAVAILABLE, STATE_UNKNOWN)
         if old is None or new is None or old.state in bad or new.state in bad:
             return
         keys = (ATTR_TEMPERATURE, ATTR_FAN_MODE)
@@ -618,7 +635,6 @@ class ClimateController:
             old.attributes.get(k) == new.attributes.get(k) for k in keys
         ):
             return  # e.g. only the current temperature changed
-        now = dt_util.utcnow().timestamp()
         if (
             self.state.last_command_at is not None
             and now - self.state.last_command_at <= self.settings[CONF_COMMAND_GRACE]
@@ -630,6 +646,12 @@ class ClimateController:
                 self._schedule_evaluate()
             return
         if self._matches(new):
+            return
+        if self._ac_back_at is not None and now - self._ac_back_at <= AC_SETTLE_SECONDS:
+            # Still settling after (re)appearing: not a manual change; bring
+            # it back to the command.
+            self.state.last_command_at = None
+            self._schedule_evaluate()
             return
         last = self.state.last_command
         current = self._ac_tuple(
@@ -1082,12 +1104,23 @@ class ClimateController:
             if i > 0 and not await self._async_wait_for_ac(calls[i - 1][2]):
                 _LOGGER.debug("%s didn't confirm %s in time", self.ac, calls[i - 1][0])
             try:
-                await self.hass.services.async_call(
-                    CLIMATE_DOMAIN,
+                async with asyncio.timeout(SERVICE_CALL_TIMEOUT_SECONDS):
+                    await self.hass.services.async_call(
+                        CLIMATE_DOMAIN,
+                        service,
+                        {ATTR_ENTITY_ID: self.ac, **data},
+                        blocking=True,
+                    )
+            except TimeoutError:
+                # Probably can't reach the AC yet; the rest would hang as
+                # well. The command is repeated later.
+                _LOGGER.warning(
+                    "%s on %s didn't finish within %s s",
                     service,
-                    {ATTR_ENTITY_ID: self.ac, **data},
-                    blocking=True,
+                    self.ac,
+                    SERVICE_CALL_TIMEOUT_SECONDS,
                 )
+                return
             except (HomeAssistantError, ValueError) as err:
                 _LOGGER.warning("Could not %s on %s: %s", service, self.ac, err)
 

@@ -1310,3 +1310,81 @@ async def test_transition_fan_in_fan_only_rest(
     assert sent(calls) == []
     await advance(hass, freezer, 1)
     assert sent(calls) == [("set_fan_mode", {"fan_mode": "silent"})]
+
+
+async def test_hanging_ac_service_does_not_block_the_control(
+    hass: HomeAssistant, local_time, freezer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An AC integration whose service never returns (device not reachable
+    yet) is given up after the timeout; the control keeps working."""
+    from homeassistant.core import ServiceRegistry
+
+    monkeypatch.setattr(
+        "custom_components.heating_profile.controller.SERVICE_CALL_TIMEOUT_SECONDS", 0
+    )
+    entry, calls = await setup_control(hass, local_time, freezer)
+    c = controller(entry)
+    original = ServiceRegistry.async_call
+    hung: list[str] = []
+
+    async def hang(self, domain, service, *args, **kwargs):
+        if domain == CLIMATE_DOMAIN:
+            hung.append(service)
+            await asyncio.Event().wait()  # never returns
+        return await original(self, domain, service, *args, **kwargs)
+
+    monkeypatch.setattr(ServiceRegistry, "async_call", hang)
+    hass.states.async_set(ROOM, "21.0")
+    await advance(hass, freezer, 10)
+    # The (zero) timeout cancels the call on the next loop iterations.
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert st(hass, STATE) == "heating"
+    assert hung == ["set_hvac_mode"]  # given up; the rest wasn't tried
+    assert not c._lock.locked()
+    # The AC is reachable again and reconnects: the command goes out at once.
+    monkeypatch.setattr(ServiceRegistry, "async_call", original)
+    hass.states.async_set(AC, "unavailable")
+    await hass.async_block_till_done()
+    set_ac(hass, "fan_only")
+    await hass.async_block_till_done()
+    assert sent(calls) == [
+        ("set_hvac_mode", {"hvac_mode": "heat"}),
+        ("set_temperature", {"temperature": 23.5}),
+        ("set_fan_mode", {"fan_mode": "silent"}),
+    ]
+
+
+async def test_ac_reconnecting_is_not_a_manual_change(
+    hass: HomeAssistant, freezer, control
+) -> None:
+    """After (re)appearing, the AC's integration may report a default state
+    and then the real one: no pause, the command is sent again right away."""
+    entry, calls = control
+    await start_heating(hass, freezer, calls)
+    hass.states.async_set(AC, "unavailable")
+    await advance(hass, freezer, 3)
+    assert st(hass, STATE) == "unavailable"
+    # Back with a default state: the command goes out at once, although it
+    # was sent only minutes ago.
+    set_ac(hass, "off", 20.0, "silent")
+    await hass.async_block_till_done()
+    assert sent(calls) == [
+        ("set_hvac_mode", {"hvac_mode": "heat"}),
+        ("set_temperature", {"temperature": 23.5}),
+        ("set_fan_mode", {"fan_mode": "auto"}),
+    ]
+    # Well after the command grace, but still settling: its old real state
+    # shows up. Not a manual change; the command is repeated.
+    freezer.tick(timedelta(seconds=100))
+    set_ac(hass, "cool", 22.0, "low")
+    await hass.async_block_till_done()
+    assert controller(entry).state.pause_until is None
+    assert st(hass, STATE) == "heating"
+    assert ("set_hvac_mode", {"hvac_mode": "heat"}) in sent(calls)
+    # Later, a change on the AC is a manual change again.
+    set_ac(hass, "heat", 23.5, "auto")
+    freezer.tick(timedelta(seconds=200))
+    set_ac(hass, "heat", 25.0, "auto")
+    await hass.async_block_till_done()
+    assert controller(entry).state.pause_until is not None
