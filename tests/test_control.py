@@ -1413,3 +1413,105 @@ async def test_restart_with_the_ac_already_there_is_not_a_manual_change(
     set_ac(hass, "heat", 25.0, "auto")
     await hass.async_block_till_done()
     assert c.state.pause_until is not None
+
+
+async def heat_then_long_rest(hass: HomeAssistant, freezer, entry, calls) -> None:
+    """Anti short cycle: a run, then a rest so long that heat mode ends."""
+    c = controller(entry)
+    await c.async_set_anti_short_cycle(True)
+    hass.states.async_set(ROOM, "21.0")
+    await advance(hass, freezer, 10)
+    assert c.state.phase == "run"
+    set_ac(hass, "heat", 26.0, "auto")
+    set_power(hass, 600)
+    hass.states.async_set(ROOM, "22.0")
+    await advance(hass, freezer, 20)
+    assert c.state.phase == "rest"
+    if c.settings["cycle_rest_fan"]:
+        set_ac(hass, "fan_only", 27.0, "silent")
+    else:
+        set_ac(hass, "heat", 17.0, "silent")
+    set_power(hass, 5)
+    # 120 min in heat mode and 60 idle minutes: back to neutral.
+    for _ in range(120):
+        await advance(hass, freezer, 1)
+        if st(hass, STATE) == "neutral":
+            break
+    assert st(hass, STATE) == "neutral"
+    sent(calls)
+
+
+async def test_back_to_heat_after_a_fan_only_rest_without_switch_gap(
+    hass: HomeAssistant, freezer, control
+) -> None:
+    """Heat mode ended during a fan-only rest: the AC was in fan only anyway,
+    so heating comes back at the start point without the 30-min gap."""
+    entry, calls = control
+    await heat_then_long_rest(hass, freezer, entry, calls)
+    c = controller(entry)
+    assert c.state.resume_side == "heat"
+    hass.states.async_set(ROOM, "21.0")
+    await advance(hass, freezer, 10)  # 10-min average reaches 21.1
+    assert st(hass, STATE) == "heating"
+    assert ("set_hvac_mode", {"hvac_mode": "heat"}) in sent(calls)
+
+
+async def test_own_change_skips_the_switch_gap(
+    hass: HomeAssistant, freezer, control
+) -> None:
+    """Without fan-only rests the gap applies, but not to the user's change."""
+    entry, calls = control
+    c = controller(entry)
+    c.settings["cycle_rest_fan"] = False
+    await heat_then_long_rest(hass, freezer, entry, calls)
+    assert c.state.resume_side is None
+    hass.states.async_set(ROOM, "21.0")
+    await advance(hass, freezer, 10)
+    assert st(hass, STATE) == "waiting"
+    assert "heating possible from" in st(hass, STATUS)
+    # The user raises the minimum: heating starts right away.
+    entry.runtime_data.profile.async_update(day_temp=21.5)
+    await hass.async_block_till_done()
+    assert st(hass, STATE) == "heating"
+
+
+async def test_own_change_skips_waiting_for_sun(
+    hass: HomeAssistant, freezer, control
+) -> None:
+    """Waiting for free warmth ends when the user changes the profile."""
+    entry, calls = control
+    stub = stub_forecast(entry)
+    stub.wait = ForecastWindow(min_temp=10.0, max_temp=12.0, radiation=300.0)
+    hass.states.async_set(ROOM, "21.3")
+    await advance(hass, freezer, 32)
+    hass.states.async_set(ROOM, "21.1")
+    await advance(hass, freezer, 10)
+    assert st(hass, STATE) == "waiting"
+    entry.runtime_data.profile.async_update(day_temp=21.5)
+    await hass.async_block_till_done()
+    assert st(hass, STATE) == "heating"
+    # Used up once heating started; later starts respect the forecast again.
+    assert controller(entry).state.user_change_at is None
+
+
+async def test_own_change_ends_the_minimum_rest(
+    hass: HomeAssistant, freezer, control
+) -> None:
+    """Raising the minimum during a rest's minimum time starts a run."""
+    entry, calls = control
+    c = controller(entry)
+    await c.async_set_anti_short_cycle(True)
+    hass.states.async_set(ROOM, "21.0")
+    await advance(hass, freezer, 10)
+    set_ac(hass, "heat", 26.0, "auto")
+    set_power(hass, 600)
+    hass.states.async_set(ROOM, "22.0")
+    await advance(hass, freezer, 20)
+    assert c.state.phase == "rest"
+    set_ac(hass, "fan_only", 27.0, "silent")
+    await advance(hass, freezer, 2)  # well within the 15-min minimum rest
+    sent(calls)
+    entry.runtime_data.profile.async_update(day_temp=22.0)
+    await hass.async_block_till_done()
+    assert c.state.phase == "run"
+    assert ("set_hvac_mode", {"hvac_mode": "heat"}) in sent(calls)

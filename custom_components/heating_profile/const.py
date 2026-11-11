@@ -251,6 +251,10 @@ SERVICE_CALL_TIMEOUT_SECONDS = 30.0
 # After the AC (re)appears, its integration may report a few states (e.g. a
 # default "off", then the real state) before it settles: not manual changes.
 AC_SETTLE_SECONDS = 120
+# After the user changed the profile, starting heat/cool (or ending a rest)
+# skips the switch gap, the waiting for free warmth/cooling and the minimum
+# rest for this long.
+USER_CHANGE_SECONDS = 600
 FORECAST_INTERVAL_MINUTES = 30
 FORECAST_MAX_AGE_HOURS = 3
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"

@@ -125,6 +125,7 @@ from .const import (
     STATE_PAUSED,
     STATE_UNAVAILABLE as CONTROL_UNAVAILABLE,
     STATE_WAITING,
+    USER_CHANGE_SECONDS,
 )
 from .control import (
     Decision,
@@ -219,6 +220,12 @@ class ControlState:
     run_setpoint: float | None = None
     # The neutral mode gets the transition fan until then (after heat/cool).
     transition_until: float | None = None
+    # Heat/cool mode ended during a fan-only rest: back to it without the
+    # switch gap, from the end of the rest's minimum time.
+    resume_side: str | None = None
+    resume_from: float | None = None
+    # The user last changed the profile (temperatures, times, mode, preset).
+    user_change_at: float | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ControlState:
@@ -414,7 +421,7 @@ class ClimateController:
                 timedelta(seconds=CONTROL_INTERVAL_SECONDS),
                 cancel_on_shutdown=True,
             ),
-            self.profile.async_add_listener(self._schedule_evaluate),
+            self.profile.async_add_listener(self._async_profile_changed),
         ]
         if self.forecast is not None:
             self._unsubs.append(
@@ -430,6 +437,16 @@ class ClimateController:
             hass.async_create_task(self._async_first_forecast(), f"{DOMAIN} forecast")
         else:
             self._schedule_evaluate()
+
+    @callback
+    def _async_profile_changed(self) -> None:
+        """The user changed the profile: act on it without the usual waits."""
+        self.state.user_change_at = dt_util.utcnow().timestamp()
+        self._schedule_evaluate()
+
+    def _user_change(self, now: float) -> bool:
+        at = self.state.user_change_at
+        return at is not None and now - at <= USER_CHANGE_SECONDS
 
     @callback
     def _async_ac_settling(self) -> None:
@@ -799,6 +816,9 @@ class ClimateController:
             wait_since=st.wait_since,
             drift_until=st.drift_until,
             drift_side=st.drift_side,
+            resume_side=st.resume_side,
+            resume_from=st.resume_from,
+            user_change=self._user_change(now),
         )
         d = decide(situation, s)
 
@@ -897,11 +917,27 @@ class ClimateController:
         ahead: str | None,
         now: float,
     ) -> None:
-        st = self.state
+        st, s = self.state, self.settings
         if st.mode == MODE_HEAT:
             st.heat_ended = now
         elif st.mode == MODE_COOL:
             st.cool_ended = now
+        if (
+            d.mode == MODE_NEUTRAL
+            and st.mode in (MODE_HEAT, MODE_COOL)
+            and st.anti_short_cycle
+            and st.phase == PHASE_REST
+            and st.phase_since is not None
+            and s[CONF_CYCLE_REST_FAN]
+        ):
+            # The AC was in fan only already: going back to this mode is no
+            # mode change for it, only the end of the rest.
+            st.resume_side = st.mode
+            st.resume_from = st.phase_since + s[CONF_CYCLE_MIN_REST] * 60
+        else:
+            st.resume_side = st.resume_from = None
+        if d.mode != MODE_NEUTRAL:
+            st.user_change_at = None
         if d.mode in (MODE_HEAT, MODE_COOL):
             st.reason = self._reason(d, room, trend, ahead)
             st.reason_since = now
@@ -994,6 +1030,7 @@ class ClimateController:
             low=d.low,
             high=d.high,
             settings=s,
+            skip_min_rest=self._user_change(now),
         )
         if phase != st.phase:
             _LOGGER.debug("Anti short cycle: %s -> %s", st.phase, phase)

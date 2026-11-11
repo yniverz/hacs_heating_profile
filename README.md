@@ -283,7 +283,15 @@ Off by default (0 min).
   status sensor's `exit_forecast_*` attributes (the forecast sensors show the
   1-h waiting window).
 - **Protection:** at least 30 min between neutral and heat/cool, 6 h between
-  heating and cooling; 1.5 °C beyond the range switches right away.
+  heating and cooling; 1.5 °C beyond the range switches right away. If heat
+  (cool) mode ended during a fan-only rest of the anti short cycle, the AC
+  was in fan only already: going back to that mode needs no 30-min gap, only
+  the rest's minimum time.
+- **Your changes act at once:** for 10 min after you change the profile
+  (temperatures, times, mode or preset, from anywhere), starting heat/cool
+  skips the 30-min gap and the waiting for sun, warmth or cooler air, and a
+  rest of the anti short cycle ends without its minimum time. Starts caused
+  by the room or the day/night switch keep all of these.
 - **Look ahead:** 30 min before a day/night switch (or the end of a manual
   override) the next period's range applies: pre-heat/-cool for it, skip
   what the old range no longer needs.
@@ -361,6 +369,12 @@ For a profile called `Living room`:
 | diagnostic sensors (disabled by default) | room average, room trend, forecast outside minimum/maximum and radiation for the next waiting window, AC setpoint, waiting until, paused until |
 
 ## Upgrading
+
+### From 0.10.x
+
+Heating (cooling) comes back without the 30-min gap after its mode ended
+during a fan-only rest, and your own changes to the profile act at once
+(see *Protection* and *Your changes act at once* above). Nothing to change.
 
 ### From 0.10.1
 

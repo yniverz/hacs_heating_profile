@@ -194,6 +194,14 @@ class Situation:
     wait_since: float | None
     drift_until: float | None
     drift_side: str | None = None  # "heat" / "cool": which limit may drift
+    # Heat/cool mode ended during a fan-only rest: going back to that mode is
+    # no mode change for the AC, so no switch gap; allowed from `resume_from`
+    # (the end of the rest's minimum time).
+    resume_side: str | None = None
+    resume_from: float | None = None
+    # The user just changed the profile: no switch gap and no waiting for
+    # free warmth/cooling.
+    user_change: bool = False
 
 
 @dataclass
@@ -386,6 +394,8 @@ def decide(s: Situation, settings: dict) -> Decision:
         and fc.max_temp is not None
         and fc.max_temp < s.period_low - settings[CONF_COOL_MARGIN]
     )
+    if s.user_change:
+        d.warm_hold = d.cool_hold = False
     if d.warm_hold and d.heat_zone:
         d.heat_zone, d.held = False, True  # only the hard limit heats now
     if d.cool_hold and d.cool_zone:
@@ -406,13 +416,15 @@ def decide(s: Situation, settings: dict) -> Decision:
     # While drifting after an early exit, the drift itself is the waiting;
     # when it ends, the mode comes back without waiting again.
     d.warmth_coming = (
-        not (drift_heat or drift_ended_heat)
+        not s.user_change
+        and not (drift_heat or drift_ended_heat)
         and d.warmth_forecast
         and s.trend > -fast
         and waited < max_wait
     )
     d.free_cooling = (
-        not (drift_cool or drift_ended_cool)
+        not s.user_change
+        and not (drift_cool or drift_ended_cool)
         and d.cool_forecast
         and s.trend < fast
         and waited < max_wait
@@ -421,18 +433,26 @@ def decide(s: Situation, settings: dict) -> Decision:
     lockout = settings[CONF_LOCKOUT] * 3600
     heat_locked = s.cool_ended is not None and s.now - s.cool_ended < lockout
     cool_locked = s.heat_ended is not None and s.now - s.heat_ended < lockout
-    gap_ok = elapsed(gap)
+
+    def gap_ok(side: str) -> bool:
+        if s.user_change or elapsed(gap):
+            return True
+        return (
+            s.resume_side == side
+            and s.resume_from is not None
+            and s.now >= s.resume_from
+        )
 
     if hard_cold:
         d.mode, d.reason = MODE_HEAT, "hard"
     elif hard_warm:
         d.mode, d.reason = MODE_COOL, "hard"
-    elif d.heat_zone and not d.warmth_coming and not heat_locked and gap_ok:
+    elif d.heat_zone and not d.warmth_coming and not heat_locked and gap_ok(MODE_HEAT):
         d.mode = MODE_HEAT
         d.reason = _start_reason(
             d.warmth_forecast, s.trend <= -fast, waited, max_wait, drift_ended_heat
         )
-    elif d.cool_zone and not d.free_cooling and not cool_locked and gap_ok:
+    elif d.cool_zone and not d.free_cooling and not cool_locked and gap_ok(MODE_COOL):
         d.mode = MODE_COOL
         d.reason = _start_reason(
             d.cool_forecast, s.trend >= fast, waited, max_wait, drift_ended_cool
@@ -442,8 +462,11 @@ def decide(s: Situation, settings: dict) -> Decision:
     if d.waiting:
         d.wait_since = s.wait_since if s.wait_since is not None else s.now
         d.waited = (s.now - d.wait_since) / 60
-        if not gap_ok and s.mode_since is not None:
+        side = MODE_HEAT if d.heat_zone else MODE_COOL
+        if not gap_ok(side) and s.mode_since is not None:
             d.gap_until = s.mode_since + gap
+            if s.resume_side == side and s.resume_from is not None:
+                d.gap_until = min(d.gap_until, s.resume_from)
         if d.heat_zone and heat_locked:
             d.lockout_until = s.cool_ended + lockout
         elif d.cool_zone and cool_locked:
@@ -487,12 +510,14 @@ def cycle_phase(
     low: float | None,
     high: float | None,
     settings: dict,
+    skip_min_rest: bool = False,
 ) -> str:
     """Next phase (run / rest) of the anti short cycle in heat or cool mode.
 
     A run lasts until the room reaches the stop point, a rest until it is
     back at the start point, each at least its minimum time. Only reaching
-    the other limit ends a run early, only the hard limit a rest.
+    the other limit ends a run early, only the hard limit (or a change by the
+    user, `skip_min_rest`) a rest.
     """
     elapsed = now - phase_since if phase_since is not None else float("inf")
     hard = settings[CONF_HARD_MARGIN]
@@ -515,7 +540,8 @@ def cycle_phase(
         return PHASE_REST if too_far or (done and elapsed >= min_run) else PHASE_RUN
     if phase == PHASE_REST:
         min_rest = settings[CONF_CYCLE_MIN_REST] * 60
-        return PHASE_RUN if urgent or (restart and elapsed >= min_rest) else PHASE_REST
+        rested = elapsed >= min_rest or skip_min_rest
+        return PHASE_RUN if urgent or (restart and rested) else PHASE_REST
     return PHASE_REST if done else PHASE_RUN
 
 
