@@ -60,6 +60,12 @@
       }
     },
     "button": {
+      "start_day": {
+        "name": "Start day now"
+      },
+      "start_night": {
+        "name": "Start night now"
+      },
       "end_pause": {
         "name": "End pause"
       }

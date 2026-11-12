@@ -56,6 +56,12 @@
       }
     },
     "button": {
+      "start_day": {
+        "default": "mdi:weather-sunset-up"
+      },
+      "start_night": {
+        "default": "mdi:weather-night"
+      },
       "end_pause": {
         "default": "mdi:play-circle-outline"
       }

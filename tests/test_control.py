@@ -199,6 +199,8 @@ async def test_entities_and_initial_state(hass: HomeAssistant, control) -> None:
         "night_temp_high",
         "day_start",
         "night_start",
+        "start_day",
+        "start_night",
     }
     keys = {e.unique_id.removeprefix(f"{entry.entry_id}_") for e in ids.values()}
     assert keys - profile_keys == set(CONTROL_ENTITY_KEYS)

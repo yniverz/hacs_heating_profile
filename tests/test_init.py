@@ -55,6 +55,8 @@ NIGHT_TEMP = "number.living_room_night_minimum"
 NIGHT_MAX = "number.living_room_night_maximum"
 DAY_START = "time.living_room_day_starts"
 NIGHT_START = "time.living_room_night_starts"
+START_DAY = "button.living_room_start_day_now"
+START_NIGHT = "button.living_room_start_night_now"
 
 
 async def set_number(hass: HomeAssistant, entity_id: str, value: float) -> None:
@@ -112,8 +114,12 @@ async def test_device_and_entities(hass: HomeAssistant, entry: MockConfigEntry) 
         NIGHT_MAX,
         DAY_START,
         NIGHT_START,
+        START_DAY,
+        START_NIGHT,
     }
     assert all(e.device_id == device.id for e in entities.values())
+    assert entities[START_DAY].unique_id == f"{entry.entry_id}_start_day"
+    assert entities[START_NIGHT].unique_id == f"{entry.entry_id}_start_night"
     assert entities[CLIMATE].unique_id == f"{entry.entry_id}_climate"
     assert entities[CLIMATE].entity_category is None
     for entity_id in (DAY_TEMP, DAY_MAX, NIGHT_TEMP, NIGHT_MAX, DAY_START, NIGHT_START):
@@ -666,3 +672,56 @@ async def test_upcoming_switch(
     await set_time(hass, NIGHT_START, "06:00")
     switch, period = profile.upcoming(dt_util.utcnow())
     assert period == profile.period(dt_util.utcnow()) == "night"
+
+
+async def press(hass: HomeAssistant, entity_id: str) -> None:
+    await hass.services.async_call(
+        "button", "press", {ATTR_ENTITY_ID: entity_id}, blocking=True
+    )
+
+
+async def test_start_day_and_night_buttons(
+    hass: HomeAssistant, local_time, entry: MockConfigEntry
+) -> None:
+    """One-off early start of a period; pressing twice changes nothing."""
+    local_time(5)  # night, day starts at 06:00 (back in time: no timer fires)
+    await async_update_entity(hass, CLIMATE)
+    assert hass.states.get(CLIMATE).attributes[ATTR_PRESET_MODE] == "night"
+
+    await press(hass, START_DAY)
+    attrs = hass.states.get(CLIMATE).attributes
+    assert attrs[ATTR_PRESET_MODE] == "day"
+    assert attrs["override"] is True
+    assert attrs["next_switch"].startswith("2026-01-15T06:00:00")
+    # Pressed again: still day, still only until 06:00.
+    await press(hass, START_DAY)
+    attrs = hass.states.get(CLIMATE).attributes
+    assert attrs[ATTR_PRESET_MODE] == "day"
+    assert attrs["next_switch"].startswith("2026-01-15T06:00:00")
+
+    # The other button undoes it.
+    await press(hass, START_NIGHT)
+    attrs = hass.states.get(CLIMATE).attributes
+    assert attrs[ATTR_PRESET_MODE] == "night"
+    assert attrs["override"] is False
+
+    # Early day again; at 06:00 the schedule takes over with day.
+    await press(hass, START_DAY)
+    local_time(6)
+    await async_update_entity(hass, CLIMATE)
+    attrs = hass.states.get(CLIMATE).attributes
+    assert attrs[ATTR_PRESET_MODE] == "day"
+    assert attrs["override"] is False
+    assert attrs["next_switch"].startswith("2026-01-15T22:00:00")
+
+    # Start day while it is day anyway: nothing happens.
+    await press(hass, START_DAY)
+    assert hass.states.get(CLIMATE).attributes["override"] is False
+
+    # Early night in the evening, until the schedule's night at 22:00.
+    local_time(21)
+    await async_update_entity(hass, CLIMATE)
+    await press(hass, START_NIGHT)
+    attrs = hass.states.get(CLIMATE).attributes
+    assert attrs[ATTR_PRESET_MODE] == "night"
+    assert attrs["next_switch"].startswith("2026-01-15T22:00:00")

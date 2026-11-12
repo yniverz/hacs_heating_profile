@@ -83,9 +83,18 @@ Entity IDs come from the name; for a profile called `Living room`:
 | `number.living_room_night_maximum` | 24.0 °C | configuration, 5–30 °C, step 0.5 |
 | `time.living_room_day_starts` | 06:00 | configuration |
 | `time.living_room_night_starts` | 22:00 | configuration |
+| `button.living_room_start_day_now` | | day from now until the next scheduled switch (see below) |
+| `button.living_room_start_night_now` | | night from now until the next scheduled switch |
 
 Minimum and maximum always stay at least 1 °C apart: if you move one past the
 other, the other one is pushed along.
+
+**Start day now / Start night now** are for one-off changes, e.g. you are up
+early: *Start day now* at 05:00 gives the day range until 06:00, then the
+schedule carries on with day as usual. Pressing it again, or while that period
+is active anyway, changes nothing; the other button cancels it. It is the same
+as choosing the preset (or tapping the Day/Night badge on the card), and like
+any change of yours it lets the climate control start heating/cooling at once.
 
 The six settings entities are **configuration entities**. They appear under
 the device's *Configuration* section and are left out of auto-generated
@@ -369,6 +378,11 @@ For a profile called `Living room`:
 | diagnostic sensors (disabled by default) | room average, room trend, forecast outside minimum/maximum and radiation for the next waiting window, AC setpoint, waiting until, paused until |
 
 ## Upgrading
+
+### From 0.11.x
+
+New buttons *Start day now* and *Start night now* on each profile's device.
+Nothing to change.
 
 ### From 0.10.x
 
